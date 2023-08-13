@@ -1,5 +1,7 @@
 # Quality disclaimer
 This is a weekend home project, provided as is with no any guaranty or support
+Code based on the echobot example 
+https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
 
 # Capabilities
   1. communicates with the openAI gpt-models
@@ -31,6 +33,7 @@ This is a weekend home project, provided as is with no any guaranty or support
 
 # Deploy and run
   1. ensure you have ssh configured to access your server
-  2. create deploy_ip.cfg with an IP address of the server
-  3. create secret.py based on the example
-  4. run ./deploy.sh
+  2. change start.sh and stop.sh according to your virtual env and location for the bot source code
+  3. create deploy_ip.cfg with an IP address of the server
+  4. create secret.py based on the example
+  5. run ./deploy.sh
