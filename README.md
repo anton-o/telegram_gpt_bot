@@ -20,7 +20,8 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
 ## What's going on above
   1. get list of commands
   2. set "system role", which will be given to gpt as a context with your question and a request to think step-by-step
-  3. your request
+  3. your request,
+    be patient... due to request to explain step-by-step, it generates long responses which take up to 10-15 seconds to generate
   4. get current system context, just in case you've forgotten it
   5. list of historical contexts, just in case you'd like to reuse
 
