@@ -32,8 +32,30 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
   openai
   python-telegram-bot
 
+# setup script as a service
+  nano /lib/systemd/system/tlggptbot.service
+  put the following into the file
+  ```
+  [Unit]
+  Description=Telegram GPT bot
+  After=network.target
+
+  [Service]
+  Type=idle
+  Restart=on-failure
+  User=root
+  ExecStart=/bin/bash -c 'source /root/ve_tlg/bin/activate && nohup python /root/python/main.py'
+
+  [Install]
+WantedBy=multi-user.target
+  ```
+  sudo chmod 644 /lib/systemd/system/tlggptbot.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable tlggptbot.service
+
 # Deploy and run
   1. ensure you have ssh configured to access your server
+  2. 
   2. change start.sh and stop.sh according to your virtual env and location for the bot source code
   3. create deploy_ip.cfg with an IP address of the server
   4. create secret.py based on the example

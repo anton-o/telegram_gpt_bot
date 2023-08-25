@@ -4,9 +4,10 @@ from telegram.ext import ContextTypes
 
 help_message = ("Commands:\n"
                 + "/start\n"
-                + "/sctx - set system context\n"
-                + "/gctx - get current system context\n"
-                + "/gctxhsit - get history of system contexts"
+                + "/sctx - set user's gpt-system context\n"
+                + "/gctx - get user's current gpt-system context\n"
+                + "/clear_ctx - clear user's gpt-system contexts history\n"
+                + "/gctxhsit - get user's history of gpt-system contexts"
                 )
 
 

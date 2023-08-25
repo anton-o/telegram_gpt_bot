@@ -42,3 +42,10 @@ async def get_assistant_ctx_history(update: Update, context: ContextTypes.DEFAUL
         a_contexts = []
     await update.message.reply_text(f"{len(a_contexts)} context(s).")
     [await update.message.reply_text(ctx) for ctx in a_contexts]
+
+async def clear_assistant_context_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /help is issued."""
+    global assistant_context, assistant_context_history
+
+    chat_id = update.effective_user.id
+    await update.message.reply_text(f"Assistant contexts history has been cleared.")
