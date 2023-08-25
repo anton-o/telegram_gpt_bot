@@ -55,8 +55,7 @@ WantedBy=multi-user.target
 
 # Deploy and run
   1. ensure you have ssh configured to access your server
-  2. 
-  2. change start.sh and stop.sh according to your virtual env and location for the bot source code
+  2. change /lib/systemd/system/tlggptbot.service according to your virtual env and location for the bot source code
   3. create deploy_ip.cfg with an IP address of the server
   4. create secret.py based on the example
   5. run ./deploy.sh
