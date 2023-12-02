@@ -3,6 +3,8 @@ from telegram.ext import ContextTypes
 
 from bot_secrets import BOT_NAME
 
+# Define a few command handlers. These usually take the two arguments update and
+# context.
 
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """get user's parameters"""
@@ -16,8 +18,6 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 
-# Define a few command handlers. These usually take the two arguments update and
-# context.
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
