@@ -10,10 +10,9 @@ def get_effective_ctx(chat_id: int) -> str:
     global assistant_context
     c_ctx = assistant_context[chat_id] if chat_id in assistant_context else ''
     
-    return c_ctx + '. Explain your thoughts step by step.'
+    return c_ctx
 
 async def set_assistant_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued."""
     global assistant_context, assistant_context_history
     chat_id = update.effective_user.id
     assistant_context[chat_id] = update.message.text.lstrip('/sctx')
@@ -25,7 +24,6 @@ async def set_assistant_context(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def get_assistant_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued."""
     global assistant_context, assistant_context_history
 
     chat_id = update.effective_user.id

@@ -8,6 +8,7 @@ from dialog_dump import dump_dialog_turn
 
 import openai
 openai.api_key = OPENAI_KEY
+current_model = 'gpt-4-1106-preview'
 
 async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     check_fraud(update)
@@ -26,7 +27,19 @@ async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     dump_dialog_turn(system_role, user_req, resp)
     await update.message.reply_text(resp)
 
-    
+
+async def set_current_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global current_model
+    new_model = update.message.text
+    models = [i['id'] for i in openai.Model.list()['data'] if 'gpt' in i['id']]
+    if new_model in models:
+        response = f'Model is changed from {new_model} to {new_model}'
+        current_model = new_model
+    else:
+        response = f'Current model is {current_model}. The suggested model is not in the available gpt-models list: ' + ', '.join(models)
+
+    await update.message.reply_text(response)
+
 def _ask_openai(chat_id: int, user_request: str) -> str:
     '''Gets gpt response for given query and current context.
         input:  user query
@@ -35,7 +48,7 @@ def _ask_openai(chat_id: int, user_request: str) -> str:
     system_role = get_effective_ctx(chat_id)
     user_req = user_request
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo", 
+        model=current_model, 
         messages= [
             {"role": "system", "content": system_role}, 
             {"role": "user", "content": user_req},

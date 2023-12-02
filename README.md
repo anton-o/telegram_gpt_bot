@@ -1,5 +1,5 @@
 # Quality disclaimer
-This is a weekend home project, provided as is with no any guaranty or support
+This is a weekend home project, provided as is with no any guaranty or support.
 Code based on the echobot example 
 https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
 

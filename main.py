@@ -3,7 +3,7 @@ import logging
 
 from telegram import __version__ as TG_VER
 from bot_secrets import BOT_TOKEN, BOT_NAME
-from openai_handlers import bot_mentioned, gpt
+from openai_handlers import bot_mentioned, gpt, set_current_model
 from gpt_ctx_mgmt import (get_assistant_context, get_assistant_ctx_history, 
                           set_assistant_context, clear_assistant_context_history)
 
@@ -52,6 +52,7 @@ def main() -> None:
     message_filters = filters.TEXT & ~filters.COMMAND & admins_filter & filters.ChatType.PRIVATE
     application.add_handler(MessageHandler(message_filters, gpt))
     application.add_handler(CommandHandler("whoami", whoami, filters=admins_filter))
+    application.add_handler(CommandHandler("smodel", set_current_model, filters=admins_filter))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
