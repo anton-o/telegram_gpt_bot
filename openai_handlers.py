@@ -1,3 +1,4 @@
+from textwrap import wrap
 from telegram import ForceReply, Update
 from telegram.ext import ContextTypes
 from bot_secrets import OPENAI_KEY
@@ -15,7 +16,7 @@ async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_req = update.message.text
     _, resp = _ask_openai(update.effective_user.id, user_req)
     # dump_dialog_turn(system_role, user_req, resp)
-    await update.message.reply_text(resp)
+    [await update.message.reply_text(chunk) for chunk in wrap(resp, width=4096, replace_whitespace=False)]
 
 
 async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -9,7 +9,7 @@ from gpt_ctx_mgmt import (get_assistant_context, get_assistant_ctx_history,
 
 from help import help_command
 from white_lists import  admins_filter, groups_filter
-from utils_handlers import start, whoami
+from utils_handlers import start, whoami, get_repo_address
 
 try:
     from telegram import __version_info__
@@ -45,6 +45,7 @@ def main() -> None:
     application.add_handler(CommandHandler("gctx", get_assistant_context, filters=universal_filters))
     application.add_handler(CommandHandler("gctxhist", get_assistant_ctx_history, filters=universal_filters))
     application.add_handler(CommandHandler("clear_ctx", clear_assistant_context_history, filters=universal_filters))
+    application.add_handler(CommandHandler("src", get_repo_address, filters=universal_filters))
     application.add_handler(PrefixHandler('@', BOT_NAME,  bot_mentioned, filters=groups_filter))
 
     
