@@ -9,7 +9,7 @@ from dialog_dump import dump_dialog_turn
 
 import openai
 openai.api_key = OPENAI_KEY
-current_model = 'gpt-4-1106-preview'
+current_model = 'gpt-4o'
 
 async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     check_fraud(update)
@@ -31,10 +31,10 @@ async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def set_current_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global current_model
-    new_model = update.message.text
+    new_model = update.message.text.lstrip('/smodel').strip()
     models = [i['id'] for i in openai.Model.list()['data'] if 'gpt' in i['id']]
     if new_model in models:
-        response = f'Model is changed from {new_model} to {new_model}'
+        response = f'Model is changed from {current_model} to {new_model}'
         current_model = new_model
     else:
         response = f'Current model is {current_model}. The suggested model is not in the available gpt-models list: ' + ', '.join(models)
