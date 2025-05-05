@@ -9,7 +9,7 @@ from dialog_dump import dump_dialog_turn
 
 import openai
 openai.api_key = OPENAI_KEY
-current_model = 'gpt-4o'
+current_model = 'gpt-4.1-mini'
 
 async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     check_fraud(update)
