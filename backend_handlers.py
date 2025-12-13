@@ -20,8 +20,8 @@ openai_client = OpenAI(
 )
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-current_oai_model = "gpt-4.1-mini"
-current_gemini_model = "gemini-2.5-flash-preview-05-20"
+current_oai_model = "gpt-5.2"
+current_gemini_model = "gemini-pro-latest"
 use_gemini = True
 
 
