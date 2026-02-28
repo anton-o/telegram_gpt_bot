@@ -12,23 +12,19 @@ from bot_secrets import (
 from antifraud import check_fraud
 
 from google import genai
-from openai import AsyncOpenAI  # Use the Async client
+from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
+from openai import AsyncOpenAI 
 
 # Initialize clients
-# AsyncOpenAI allows non-blocking network calls
 openai_client = AsyncOpenAI(
     organization=ORGANIZATION,
     project=PROJECT,
     api_key=OPENAI_KEY
 )
-
-# google.genai supports async natively via the .aio property
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Default model constants
-DEFAULT_OAI_MODEL = "gpt-5.2"  # Updated to a more standard OpenAI model
-DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
-
+DEFAULT_OAI_MODEL = "gpt-5.2"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview" 
 
 async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     check_fraud(update)
@@ -36,17 +32,14 @@ async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not user_req:
         return
 
-    # Retrieve user-specific preferences, falling back to defaults
     use_gemini = context.user_data.get("use_gemini", True)
     model = context.user_data.get("gemini_model", DEFAULT_GEMINI_MODEL) if use_gemini else context.user_data.get("oai_model", DEFAULT_OAI_MODEL)
 
-    # Await the async function so the bot doesn't freeze
     resp = await _async_ask_llm(user_req, use_gemini, model)
     
-    # Safe chunking for long messages
     for chunk in wrap(resp, width=4096, replace_whitespace=False):
-        await update.message.reply_text(chunk)
-
+        # Added Markdown parsing so the extracted URLs render as clickable links
+        await update.message.reply_text(chunk, parse_mode="Markdown")
 
 async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     check_fraud(update)
@@ -56,34 +49,26 @@ async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     text_offset = update.message.entities[0].offset + update.message.entities[0].length
     user_req = update.message.text[text_offset:].strip() 
 
-    # Retrieve user-specific preferences
     use_gemini = context.user_data.get("use_gemini", True)
     model = context.user_data.get("gemini_model", DEFAULT_GEMINI_MODEL) if use_gemini else context.user_data.get("oai_model", DEFAULT_OAI_MODEL)
 
     resp = await _async_ask_llm(user_req, use_gemini, model)
     
-    # Added chunking here to prevent Telegram API errors on long mentions
     for chunk in wrap(resp, width=4096, replace_whitespace=False):
-        await update.message.reply_text(chunk)
-
+        await update.message.reply_text(chunk, parse_mode="Markdown")
 
 async def set_current_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Determine the current backend and model from user data
     use_gemini = context.user_data.get("use_gemini", True)
     current_model = context.user_data.get("gemini_model", DEFAULT_GEMINI_MODEL) if use_gemini else context.user_data.get("oai_model", DEFAULT_OAI_MODEL)
 
-    # USE CASE 1: Empty command -> Fetch and display the list of available models
     if not context.args:
-        # Give the user immediate feedback since API calls can take a second
         await update.message.reply_text("Fetching available models... please wait ⏳")
-        
         try:
             if use_gemini:
                 available_models = []
-                # Fetch Gemini models asynchronously
                 pager = await gemini_client.aio.models.list()
-                async for model in pager:
-                    m_name = model.name.lstrip("models/") if model.name else None
+                async for model_obj in pager:
+                    m_name = model_obj.name.lstrip("models/") if model_obj.name else None
                     if m_name and "gemini-" in m_name:
                         available_models.append(m_name)
                 
@@ -95,9 +80,7 @@ async def set_current_model(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     parse_mode="Markdown"
                 )
             else:
-                # Fetch OpenAI models asynchronously
                 models_response = await openai_client.models.list()
-                # Filter to keep only relevant text models (exclude whisper, dall-e, etc.)
                 available_models = [
                     m.id for m in models_response.data 
                     if 'gpt' in m.id or 'o1' in m.id or 'o3' in m.id
@@ -112,12 +95,9 @@ async def set_current_model(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 )
         except Exception as e:
             await update.message.reply_text(f"⚠️ Failed to fetch the model list: {str(e)}")
-        
-        return # Exit early since we just showed the list
+        return 
 
-    # USE CASE 2: User provided a model name -> Update the preference
     new_model = context.args[0].strip()
-    
     if use_gemini:
         context.user_data["gemini_model"] = new_model
         await update.message.reply_text(f"✅ Gemini model changed from {current_model} to {new_model}")
@@ -133,7 +113,6 @@ async def set_backend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     backend_requested = context.args[0].lower()
-    
     if backend_requested == "gemini":
         context.user_data["use_gemini"] = True
         await update.message.reply_text("Gemini is now your active backend.")
@@ -143,24 +122,48 @@ async def set_backend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.message.reply_text("Invalid backend. Please use 'gemini' or 'openai'.")
 
-
 async def _async_ask_llm(user_request: str, use_gemini: bool, model: str) -> str:
-    """
-    Asynchronously gets the LLM response for a given query.
-    Inputs: user query, backend flag, and specific model string.
-    Returns: A string containing the API response or an error message.
-    """
     try:
         if use_gemini:
-            # Using the .aio property accesses the asynchronous methods in the new Gemini SDK
+            # 1. Initialize the Search Tool
+            search_tool = Tool(google_search=GoogleSearch())
+            
+            # 2. Attach the tool to the generation config
+            config = GenerateContentConfig(
+                tools=[search_tool],
+                temperature=0.0, # Lower temp forces higher fidelity when pulling facts
+            )
+
             response = await gemini_client.aio.models.generate_content(
                 model=model, 
                 contents=user_request,
+                config=config
             )
-            return "gmn: " + (response.text if response.text else "[No text returned]")
+            
+            resp_text = response.text if response.text else "[No text returned]"
+            
+            # 3. Extract and Deduplicate URLs from Grounding Metadata
+            source_links = {}
+            if response.candidates and response.candidates[0].grounding_metadata:
+                metadata = response.candidates[0].grounding_metadata
+                
+                # Iterate through the chunks of data the model retrieved
+                if metadata.grounding_chunks:
+                    for chunk in metadata.grounding_chunks:
+                        # Ensure the chunk contains a web URI
+                        if hasattr(chunk, 'web') and chunk.web and chunk.web.uri:
+                            # Using a dictionary with URI as the key deduplicates identical URLs
+                            source_links[chunk.web.uri] = chunk.web.title or "Source Link"
+            
+            # 4. Format and append the sources if any were found
+            if source_links:
+                resp_text += "\n\n**Sources:**\n"
+                for uri, title in source_links.items():
+                    resp_text += f"- [{title}]({uri})\n"
+
+            return "gmn: " + resp_text
             
         else:
-            # Await the OpenAI async client
             response = await openai_client.chat.completions.create(
                 model=model, 
                 messages=[
@@ -170,5 +173,4 @@ async def _async_ask_llm(user_request: str, use_gemini: bool, model: str) -> str
             return "oai: " + (response.choices[0].message.content or "[No text returned]")
             
     except Exception as e:
-        # Prevents the bot from crashing silently
         return f"⚠️ API Error: {str(e)}"
