@@ -21,7 +21,7 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
-    await update.message.reply_html(f"Hi {user.mention_html()}! \nSet context, then use @{BOT_NAME} to ask gpt about something. Type /help for the command list.", reply_markup=ForceReply(selective=True))
+    await update.message.reply_html(f"Hi {user.mention_html()}! \nUse @{BOT_NAME} to ask the bot something. Type /help for the command list.", reply_markup=ForceReply(selective=True))
 
 async def get_repo_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """get github repository address to contribute/fork"""
