@@ -33,3 +33,13 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "ASYNC", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "backend_handlers",
+    "bot_secrets",
+    "help",
+    "main",
+    "utils_handlers",
+    "white_lists",
+]
