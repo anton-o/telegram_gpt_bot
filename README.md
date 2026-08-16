@@ -9,6 +9,9 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
   3. supports persistent private conversations for configured administrators
   4. allows administrators to select the active backend and model
 
+OpenAI is the default backend and `gpt-5.6-terra` is its default model. Saved
+per-user selections continue to override these defaults.
+
 ## Private conversation context
 
 Private administrator chats reuse provider-side conversation context. The bot
