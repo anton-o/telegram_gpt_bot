@@ -2,3 +2,8 @@ bot_secrets.py
 deploy_config.cfg
 /secrets/
 __pycache__
+.venv/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

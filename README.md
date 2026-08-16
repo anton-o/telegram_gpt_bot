@@ -27,6 +27,25 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
   python-telegram-bot
   google-genai
 
+# Development and tests
+Create a virtual environment and install the development dependencies:
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements-dev.txt
+  ```
+
+Run the unit tests:
+  ```bash
+  pytest
+  ```
+
+The unit tests use fake credentials and mocked API clients. They do not call
+Telegram, OpenAI, Gemini, or Google Search, and do not require repository
+secrets. GitHub Actions runs the suite automatically when a pull request is
+opened. After an ordinary branch push, a user with repository write access can
+run it manually from the Actions tab by selecting the pushed branch.
+
 # setup script as a service
   nano /lib/systemd/system/tlggptbot.service
   put the following into the file

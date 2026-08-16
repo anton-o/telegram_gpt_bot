@@ -9,8 +9,6 @@ from bot_secrets import (
     GEMINI_API_KEY
 )
 
-from antifraud import check_fraud
-
 from google import genai
 from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
 from openai import AsyncOpenAI 
@@ -27,7 +25,6 @@ DEFAULT_OAI_MODEL = "gpt-5.2"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview" 
 
 async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    check_fraud(update)
     user_req = update.message.text
     if not user_req:
         return
@@ -42,12 +39,13 @@ async def gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(chunk, parse_mode="Markdown")
 
 async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    check_fraud(update)
     if not update.message.entities or not update.message.text:
         return
 
     text_offset = update.message.entities[0].offset + update.message.entities[0].length
     user_req = update.message.text[text_offset:].strip() 
+    if not user_req:
+        return
 
     use_gemini = context.user_data.get("use_gemini", True)
     model = context.user_data.get("gemini_model", DEFAULT_GEMINI_MODEL) if use_gemini else context.user_data.get("oai_model", DEFAULT_OAI_MODEL)
