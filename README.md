@@ -108,3 +108,54 @@ and service unit. Successful migrations retain the old application under
 
 The new service executes `/root/python/.venv/bin/python` directly. Dependency
 synchronization happens during deployment, never during a service restart.
+
+## Routine deployments
+
+Routine deployments use the same named `deploy_config.cfg`. They are accepted
+only from a clean local checkout whose `HEAD` exactly matches `origin/main`.
+Start with the read-only validation:
+
+```bash
+git switch main
+git pull --ff-only
+./deploy.sh --preflight
+```
+
+Deploy after preflight succeeds:
+
+```bash
+./deploy.sh
+```
+
+The deployment uploads a checksummed runtime-only bundle, copies the existing
+server secret into a staged `/root/python.new.<deployment-id>`, synchronizes the
+locked production dependencies, and validates imports before stopping the
+service. It then performs a short systemd cutover and automatically restores
+the previous application and unit if health checks fail. Only the immediately
+previous successful release is retained under
+`/root/tlggptbot-backups/releases`.
+
+Routine deployments never upgrade uv or Python. A mismatch with
+`deploy/runtime-versions.conf` aborts and requires a separately reviewed runtime
+upgrade.
+
+## Post-migration cleanup
+
+Migration rollback assets become eligible for cleanup only after seven healthy
+days and one successful routine deployment. Audit the exact targets first:
+
+```bash
+./deploy-cleanup.sh --preflight
+```
+
+After reviewing that output, explicitly execute cleanup:
+
+```bash
+./deploy-cleanup.sh --execute
+```
+
+Cleanup removes `/root/ve_tlg`, the initial migration backup, an unchanged
+shadowed legacy unit, and validated migration staging remnants. It does not
+stop the active service and retains the latest routine rollback. The migration
+scripts and legacy requirements remain in the repository until this server
+cleanup has completed successfully; remove them in a final cleanup commit.

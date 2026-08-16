@@ -80,3 +80,10 @@ and must preserve `/root/ve_tlg`, the old systemd unit, and server-side
 service paths without an explicit migration design change. Keep
 `deploy/runtime-versions.conf`, `.python-version`, and the CI uv pin aligned;
 the deployment tests enforce this contract.
+
+After migration, `deploy.sh` is the routine local orchestrator and
+`deploy-remote.sh` performs the staged server cutover. Routine deployments must
+come from a clean commit equal to `origin/main` and must abort on uv or Python
+pin drift. `deploy-cleanup.sh --execute` is destructive and is allowed only
+after its seven-day and successful-routine-deploy gates pass. Keep migration
+scripts and legacy requirements until that cleanup has actually succeeded.

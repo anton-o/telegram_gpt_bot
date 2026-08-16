@@ -9,8 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def test_shell_scripts_have_valid_bash_syntax():
     scripts = [
+        "cleanup-remote.sh",
+        "deploy-cleanup.sh",
         "deploy.sh",
         "deploy-migrate.sh",
+        "deploy-remote.sh",
         "migrate.sh",
         "start.sh",
         "stop.sh",
@@ -23,12 +26,26 @@ def test_shell_scripts_have_valid_bash_syntax():
 
 
 def test_migration_scripts_are_executable():
-    for script in ("deploy-migrate.sh", "migrate.sh"):
+    for script in (
+        "cleanup-remote.sh",
+        "deploy-cleanup.sh",
+        "deploy-migrate.sh",
+        "deploy-remote.sh",
+        "deploy.sh",
+        "migrate.sh",
+    ):
         assert os.access(PROJECT_ROOT / script, os.X_OK)
 
 
 def test_migration_scripts_expose_help_without_side_effects():
-    for script in ("deploy-migrate.sh", "migrate.sh"):
+    for script in (
+        "cleanup-remote.sh",
+        "deploy-cleanup.sh",
+        "deploy-migrate.sh",
+        "deploy-remote.sh",
+        "deploy.sh",
+        "migrate.sh",
+    ):
         result = subprocess.run(
             [str(PROJECT_ROOT / script), "--help"],
             check=True,
@@ -46,14 +63,27 @@ def test_migration_scripts_expose_help_without_side_effects():
         ("REMOTE_HOST=one\nREMOTE_HOST=two\n", "duplicate configuration key"),
     ],
 )
-def test_deploy_migration_rejects_unsafe_config_before_network_access(
-    tmp_path, contents, expected_error
+@pytest.mark.parametrize(
+    ("script", "extra_arguments"),
+    [
+        ("deploy-migrate.sh", []),
+        ("deploy.sh", []),
+        ("deploy-cleanup.sh", ["--preflight"]),
+    ],
+)
+def test_deployment_commands_reject_unsafe_config_before_network_access(
+    tmp_path, contents, expected_error, script, extra_arguments
 ):
     config = tmp_path / "deploy.cfg"
     config.write_text(contents)
 
     result = subprocess.run(
-        [str(PROJECT_ROOT / "deploy-migrate.sh"), "--config", str(config)],
+        [
+            str(PROJECT_ROOT / script),
+            "--config",
+            str(config),
+            *extra_arguments,
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -87,6 +117,27 @@ def test_systemd_unit_uses_uv_environment_without_runtime_sync():
     assert "ExecStart=/root/python/.venv/bin/python /root/python/main.py" in unit
     assert "ExecStartPre=" not in unit
     assert "uv sync" not in unit
+
+
+def test_routine_deploy_is_staged_and_main_only():
+    local_deploy = (PROJECT_ROOT / "deploy.sh").read_text()
+    remote_deploy = (PROJECT_ROOT / "deploy-remote.sh").read_text()
+
+    assert "origin/main" in local_deploy
+    assert "working tree must be clean" in local_deploy
+    assert "uv pin drift requires an explicit runtime upgrade" in remote_deploy
+    assert 'NEW_APP="${APP_DIR}.new.${DEPLOYMENT_ID}"' in remote_deploy
+    assert "rolling back" in remote_deploy
+
+
+def test_cleanup_requires_explicit_execution_and_soak_period():
+    local_cleanup = (PROJECT_ROOT / "deploy-cleanup.sh").read_text()
+    remote_cleanup = (PROJECT_ROOT / "cleanup-remote.sh").read_text()
+
+    assert "--execute" in local_cleanup
+    assert "SOAK_SECONDS=604800" in remote_cleanup
+    assert "one successful routine deployment is required" in remote_cleanup
+    assert "exactly one routine rollback backup is required" in remote_cleanup
 
 
 def test_runtime_version_pins_stay_aligned():

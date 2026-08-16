@@ -31,7 +31,8 @@ lint: uv-version
 	$(UV) run --locked ruff check .
 
 scripts-check:
-	bash -n deploy.sh deploy-migrate.sh migrate.sh start.sh stop.sh
+	bash -n cleanup-remote.sh deploy-cleanup.sh deploy-migrate.sh \
+		deploy-remote.sh deploy.sh migrate.sh start.sh stop.sh
 
 compile: uv-version
 	$(UV) run --locked python -m compileall -q \
