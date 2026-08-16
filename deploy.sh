@@ -141,6 +141,7 @@ done <deploy/runtime-versions.conf
 required_files=(
     .python-version
     backend_handlers.py
+    cleanup-remote.sh
     deploy-remote.sh
     help.py
     main.py
@@ -206,6 +207,7 @@ REMOTE
 }
 
 remote_preflight
+ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" bash -s -- audit <cleanup-remote.sh
 if ((PREFLIGHT_ONLY)); then
     echo "Preflight passed; no server changes were made."
     exit 0
@@ -219,6 +221,7 @@ for required_file in "${required_files[@]}"; do
     install -m 0644 "$required_file" "$LOCAL_BUNDLE/$required_file"
 done
 chmod 0755 "$LOCAL_BUNDLE/deploy-remote.sh"
+chmod 0755 "$LOCAL_BUNDLE/cleanup-remote.sh"
 lock_hash="$($checksum_command uv.lock | awk '{print $1}')"
 printf 'DEPLOYMENT_ID=%s\nGIT_COMMIT=%s\nLOCK_SHA256=%s\n' \
     "$deployment_id" "$commit_id" "$lock_hash" >"$LOCAL_BUNDLE/DEPLOYMENT_METADATA"
@@ -241,6 +244,11 @@ if ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" bash \
     echo "Deployment $deployment_id completed successfully."
 else
     status=$?
-    echo "Deployment failed with status $status; diagnostics: $remote_staging" >&2
+    if ((status == 20)); then
+        echo "Deployment succeeded, but automatic migration cleanup failed." >&2
+        echo "Diagnostics: $remote_staging" >&2
+    else
+        echo "Deployment failed with status $status; diagnostics: $remote_staging" >&2
+    fi
     exit "$status"
 fi

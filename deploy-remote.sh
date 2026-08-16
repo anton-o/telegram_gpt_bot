@@ -229,6 +229,17 @@ while IFS= read -r old_backup; do
     fi
 done < <(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print)
 
+unit_hash="$(sha256sum "$STAGING_DIR/deploy/tlggptbot.service" | awk '{print $1}')"
+set +e
+bash "$STAGING_DIR/cleanup-remote.sh" auto "$unit_hash"
+cleanup_status=$?
+set -e
+if ((cleanup_status != 0)); then
+    echo "DEPLOYMENT SUCCEEDED, BUT MIGRATION CLEANUP FAILED." >&2
+    echo "The healthy release remains active; inspect $STAGING_DIR/deployment.log." >&2
+    exit "$cleanup_status"
+fi
+
 "$UV_BIN" cache prune --ci || echo "WARNING: uv cache pruning failed" >&2
 echo "Deployment completed: $GIT_COMMIT"
 echo "Rollback backup retained: $BACKUP_DIR"

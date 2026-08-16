@@ -139,23 +139,27 @@ Routine deployments never upgrade uv or Python. A mismatch with
 `deploy/runtime-versions.conf` aborts and requires a separately reviewed runtime
 upgrade.
 
-## Post-migration cleanup
+## One-off post-migration cleanup
 
-Migration rollback assets become eligible for cleanup only after seven healthy
-days and one successful routine deployment. Audit the exact targets first:
+The first routine deployment after this bridge release audits the migration
+rollback assets before making changes. After the new release passes its health
+checks and its immediate rollback is retained, the same deployment
+automatically removes `/root/ve_tlg`, the initial migration backup, an unchanged
+shadowed legacy unit, and validated migration staging remnants. No separate
+cleanup command or schedule is required.
+
+An optional read-only audit is available before deployment:
 
 ```bash
 ./deploy-cleanup.sh --preflight
 ```
 
-After reviewing that output, explicitly execute cleanup:
+Cleanup progress and completion are recorded under
+`/root/tlggptbot-backups`, outside the replaceable application directory. An
+interrupted cleanup resumes only its previously validated targets. If cleanup
+fails after deployment, the healthy release remains active and the command
+returns a cleanup-specific failure with diagnostics.
 
-```bash
-./deploy-cleanup.sh --execute
-```
-
-Cleanup removes `/root/ve_tlg`, the initial migration backup, an unchanged
-shadowed legacy unit, and validated migration staging remnants. It does not
-stop the active service and retains the latest routine rollback. The migration
-scripts and legacy requirements remain in the repository until this server
-cleanup has completed successfully; remove them in a final cleanup commit.
+The migration scripts, cleanup bridge, legacy requirements, and start/stop
+wrappers remain in the repository only until the automatic cleanup reports
+success. Remove them together in a final repository cleanup commit.

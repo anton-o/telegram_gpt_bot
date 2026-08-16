@@ -84,6 +84,9 @@ the deployment tests enforce this contract.
 After migration, `deploy.sh` is the routine local orchestrator and
 `deploy-remote.sh` performs the staged server cutover. Routine deployments must
 come from a clean commit equal to `origin/main` and must abort on uv or Python
-pin drift. `deploy-cleanup.sh --execute` is destructive and is allowed only
-after its seven-day and successful-routine-deploy gates pass. Keep migration
-scripts and legacy requirements until that cleanup has actually succeeded.
+pin drift. The cleanup bridge must audit without mutation before cutover and
+may remove migration assets only after the new service is healthy and its
+immediate rollback exists. A cleanup failure must not roll back that healthy
+release. Keep migration scripts and legacy requirements until the persistent
+server completion marker confirms cleanup; then remove all migration and
+cleanup scaffolding in one follow-up commit.
