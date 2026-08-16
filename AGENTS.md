@@ -47,9 +47,7 @@ make check
 - `make check` verifies the lock, formatting, lint, syntax, tests, and coverage.
 
 Use `uv add` or `uv add --dev` for dependency changes and commit both
-`pyproject.toml` and `uv.lock`. Do not edit `uv.lock` directly. The requirements
-files are retained only for legacy server rollback and are not the development
-source of truth.
+`pyproject.toml` and `uv.lock`. Do not edit `uv.lock` directly.
 
 Run `make check` before handing off code changes.
 
@@ -71,22 +69,13 @@ generated persistence databases. Use fake values and mocked clients in tests.
 Do not deploy, contact external APIs, push branches, or open pull requests unless
 the user explicitly requests it.
 
-## Server migration
+## Server deployment
 
-`deploy-migrate.sh` is the local orchestrator and `migrate.sh` is its remote,
-root-only worker. The migration is deliberately staged outside `/root/python`
-and must preserve `/root/ve_tlg`, the old systemd unit, and server-side
-`bot_secrets.py` for rollback. Do not broaden the accepted application or
-service paths without an explicit migration design change. Keep
+`deploy.sh` is the local orchestrator and `deploy-remote.sh` performs the
+staged, root-only server cutover. Routine deployments must come from a clean
+commit equal to `origin/main`, must preserve the server-side `bot_secrets.py`,
+and must abort on uv or Python pin drift. Keep
 `deploy/runtime-versions.conf`, `.python-version`, and the CI uv pin aligned;
-the deployment tests enforce this contract.
-
-After migration, `deploy.sh` is the routine local orchestrator and
-`deploy-remote.sh` performs the staged server cutover. Routine deployments must
-come from a clean commit equal to `origin/main` and must abort on uv or Python
-pin drift. The cleanup bridge must audit without mutation before cutover and
-may remove migration assets only after the new service is healthy and its
-immediate rollback exists. A cleanup failure must not roll back that healthy
-release. Keep migration scripts and legacy requirements until the persistent
-server completion marker confirms cleanup; then remove all migration and
-cleanup scaffolding in one follow-up commit.
+the deployment tests enforce this contract. Preserve atomic cutover, health
+checks, automatic rollback, and one-release retention when changing deployment
+behavior.

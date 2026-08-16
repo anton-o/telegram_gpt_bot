@@ -185,7 +185,7 @@ NEW_APP_MOVED=1
 install -o root -g root -m 0644 "$STAGING_DIR/deploy/tlggptbot.service" "$UNIT_PATH"
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
-health_start="$(date --iso-8601=seconds)"
+health_start="$(date '+%Y-%m-%d %H:%M:%S')"
 systemctl start "$SERVICE_NAME"
 sleep 15
 
@@ -228,17 +228,6 @@ while IFS= read -r old_backup; do
         echo "WARNING: could not remove old release backup: $old_backup" >&2
     fi
 done < <(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print)
-
-unit_hash="$(sha256sum "$STAGING_DIR/deploy/tlggptbot.service" | awk '{print $1}')"
-set +e
-bash "$STAGING_DIR/cleanup-remote.sh" auto "$unit_hash"
-cleanup_status=$?
-set -e
-if ((cleanup_status != 0)); then
-    echo "DEPLOYMENT SUCCEEDED, BUT MIGRATION CLEANUP FAILED." >&2
-    echo "The healthy release remains active; inspect $STAGING_DIR/deployment.log." >&2
-    exit "$cleanup_status"
-fi
 
 "$UV_BIN" cache prune --ci || echo "WARNING: uv cache pruning failed" >&2
 echo "Deployment completed: $GIT_COMMIT"
