@@ -19,7 +19,7 @@ openai_client = AsyncOpenAI(
 )
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-DEFAULT_OAI_MODEL = "gpt-5.2"
+DEFAULT_OAI_MODEL = "gpt-5.6-terra"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 CONVERSATION_TIMEOUT = timedelta(minutes=30)
 NEW_CONVERSATION_NOTICE = "A new conversation has started."
@@ -45,7 +45,7 @@ def _get_user_lock(user_id: int) -> asyncio.Lock:
 
 def _default_user_settings() -> dict[str, Any]:
     return {
-        "use_gemini": True,
+        "use_gemini": False,
         "gemini_model": DEFAULT_GEMINI_MODEL,
         "oai_model": DEFAULT_OAI_MODEL,
     }
