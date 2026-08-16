@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from textwrap import wrap
 from typing import Any
+from urllib.parse import SplitResult, urlsplit
 
 from google import genai
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -23,6 +24,10 @@ DEFAULT_OAI_MODEL = "gpt-5.6-terra"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 CONVERSATION_TIMEOUT = timedelta(minutes=30)
 NEW_CONVERSATION_NOTICE = "A new conversation has started."
+OPENAI_SEARCH_FALLBACK_NOTICE = (
+    "⚠️ Live web search is unavailable for this model; "
+    "this answer was generated without it."
+)
 
 logger = logging.getLogger(__name__)
 _user_locks: dict[int, asyncio.Lock] = {}
@@ -178,6 +183,7 @@ async def _ask_private_llm(
                 model,
                 previous_context_id=previous_context_id,
                 store_context=True,
+                allow_web_search=not settings["use_gemini"],
             )
         except ContextUnavailableError:
             await state_store.reset_conversation(
@@ -192,6 +198,7 @@ async def _ask_private_llm(
                 settings["use_gemini"],
                 model,
                 store_context=True,
+                allow_web_search=not settings["use_gemini"],
             )
             announce_new = True
 
@@ -388,6 +395,102 @@ def _gemini_sources(interaction: Any) -> dict[str, str]:
     return source_links
 
 
+def _escape_markdown_link_label(label: str) -> str:
+    for character in ("\\", "_", "*", "`", "[", "]"):
+        label = label.replace(character, f"\\{character}")
+    return label
+
+
+def _escape_markdown_link_url(url: str) -> str:
+    return url.replace("\\", "\\\\").replace(")", "\\)")
+
+
+def _parse_web_url(url: Any) -> SplitResult | None:
+    if not isinstance(url, str) or any(character.isspace() for character in url):
+        return None
+    try:
+        parsed_url = urlsplit(url)
+    except ValueError:
+        return None
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        return None
+    return parsed_url
+
+
+def _format_openai_citations(text: str, annotations: list[Any]) -> str:
+    citations: list[tuple[int, int, str]] = []
+    occupied_until = 0
+
+    candidates = sorted(
+        (
+            annotation
+            for annotation in annotations
+            if getattr(annotation, "type", None) == "url_citation"
+        ),
+        key=lambda annotation: (
+            getattr(annotation, "start_index", -1),
+            getattr(annotation, "end_index", -1),
+        ),
+    )
+    for annotation in candidates:
+        start = getattr(annotation, "start_index", None)
+        end = getattr(annotation, "end_index", None)
+        url = getattr(annotation, "url", None)
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        parsed_url = _parse_web_url(url)
+        if parsed_url is None:
+            continue
+        if start < occupied_until or start < 0 or end <= start or end > len(text):
+            continue
+
+        title = getattr(annotation, "title", None)
+        if not isinstance(title, str):
+            title = parsed_url.netloc
+        title = " ".join(title.split()) or parsed_url.netloc or "Source"
+        link = (
+            f"[{_escape_markdown_link_label(title)}]({_escape_markdown_link_url(url)})"
+        )
+        citations.append((start, end, link))
+        occupied_until = end
+
+    for start, end, link in reversed(citations):
+        text = text[:start] + link + text[end:]
+    return text
+
+
+def _format_openai_response(response: Any) -> str:
+    output_blocks: list[str] = []
+    found_output_text = False
+    for output in getattr(response, "output", []) or []:
+        if getattr(output, "type", None) != "message":
+            continue
+        for content in getattr(output, "content", []) or []:
+            if getattr(content, "type", None) != "output_text":
+                continue
+            found_output_text = True
+            output_blocks.append(
+                _format_openai_citations(
+                    getattr(content, "text", "") or "",
+                    getattr(content, "annotations", []) or [],
+                )
+            )
+
+    if found_output_text:
+        return "".join(output_blocks) or "[No text returned]"
+    return getattr(response, "output_text", None) or "[No text returned]"
+
+
+def _is_web_search_rejection(exc: BadRequestError) -> bool:
+    param = exc.param
+    if not isinstance(param, str):
+        return False
+    return any(
+        param == field or param.startswith(f"{field}.") or param.startswith(f"{field}[")
+        for field in ("tools", "tool_choice")
+    )
+
+
 async def _async_ask_llm(
     user_request: str,
     use_gemini: bool,
@@ -395,6 +498,7 @@ async def _async_ask_llm(
     *,
     previous_context_id: str | None = None,
     store_context: bool,
+    allow_web_search: bool = False,
 ) -> LLMResult:
     try:
         if use_gemini:
@@ -428,9 +532,30 @@ async def _async_ask_llm(
         }
         if previous_context_id is not None:
             request["previous_response_id"] = previous_context_id
-        response = await openai_client.responses.create(**request)
+        if allow_web_search:
+            request["tools"] = [{"type": "web_search"}]
+            request["tool_choice"] = "auto"
+
+        search_fallback = False
+        try:
+            response = await openai_client.responses.create(**request)
+        except BadRequestError as exc:
+            if not allow_web_search or not _is_web_search_rejection(exc):
+                raise
+            logger.warning(
+                "OpenAI model %s rejected web search; retrying without it",
+                model,
+            )
+            request.pop("tools", None)
+            request.pop("tool_choice", None)
+            response = await openai_client.responses.create(**request)
+            search_fallback = True
+
+        resp_text = _format_openai_response(response)
+        if search_fallback:
+            resp_text = f"{OPENAI_SEARCH_FALLBACK_NOTICE}\n\n{resp_text}"
         return LLMResult(
-            text="oai: " + (response.output_text or "[No text returned]"),
+            text="oai: " + resp_text,
             context_id=response.id if store_context else None,
         )
 

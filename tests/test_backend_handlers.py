@@ -65,6 +65,7 @@ async def test_first_private_prompt_starts_persistent_openai_context(
         backend_handlers.DEFAULT_OAI_MODEL,
         previous_context_id=None,
         store_context=True,
+        allow_web_search=True,
     )
     assert update.message.reply_text.await_args_list[0].args == (
         backend_handlers.NEW_CONVERSATION_NOTICE,
@@ -168,6 +169,7 @@ async def test_private_prompt_uses_persisted_openai_selection(
     await backend_handlers.gpt(make_update(), make_context())
 
     assert ask.await_args.args[:3] == ("question", False, "gpt-test")
+    assert ask.await_args.kwargs["allow_web_search"] is True
 
 
 async def test_persisted_gemini_selection_overrides_openai_default(
@@ -189,6 +191,7 @@ async def test_persisted_gemini_selection_overrides_openai_default(
     await backend_handlers.gpt(make_update(), make_context())
 
     assert ask.await_args.args[:3] == ("question", True, "gemini-test")
+    assert ask.await_args.kwargs["allow_web_search"] is False
 
 
 async def test_private_empty_message_is_ignored(monkeypatch):
@@ -470,6 +473,7 @@ async def test_openai_request_uses_responses_continuation(monkeypatch):
         "gpt-test",
         previous_context_id="response-1",
         store_context=True,
+        allow_web_search=True,
     )
 
     assert result == backend_handlers.LLMResult("oai: answer", "response-2")
@@ -478,7 +482,187 @@ async def test_openai_request_uses_responses_continuation(monkeypatch):
         input="question",
         store=True,
         previous_response_id="response-1",
+        tools=[{"type": "web_search"}],
+        tool_choice="auto",
     )
+
+
+async def test_openai_group_request_does_not_enable_web_search(monkeypatch):
+    response = SimpleNamespace(id="response-1", output_text="answer")
+    create = AsyncMock(return_value=response)
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(backend_handlers, "openai_client", client)
+
+    result = await backend_handlers._async_ask_llm(
+        "question",
+        False,
+        "gpt-test",
+        store_context=False,
+    )
+
+    assert result == backend_handlers.LLMResult("oai: answer", None)
+    create.assert_awaited_once_with(
+        model="gpt-test",
+        input="question",
+        store=False,
+    )
+
+
+async def test_openai_response_formats_valid_citations(monkeypatch):
+    text = "First CIT1, second CIT2, bad BAD and BROKEN."
+    first_start = text.index("CIT1")
+    second_start = text.index("CIT2")
+    bad_start = text.index("BAD")
+    broken_start = text.index("BROKEN")
+    annotations = [
+        SimpleNamespace(
+            type="url_citation",
+            start_index=first_start,
+            end_index=first_start + len("CIT1"),
+            title="Paper_One",
+            url="https://example.com/one",
+        ),
+        SimpleNamespace(
+            type="url_citation",
+            start_index=first_start,
+            end_index=first_start + len("CIT1"),
+            title="Duplicate",
+            url="https://example.com/duplicate",
+        ),
+        SimpleNamespace(
+            type="url_citation",
+            start_index=second_start,
+            end_index=second_start + len("CIT2"),
+            title="Paper [Two]",
+            url="https://example.com/two",
+        ),
+        SimpleNamespace(
+            type="url_citation",
+            start_index=bad_start,
+            end_index=bad_start + len("BAD"),
+            title="Unsafe",
+            url="ftp://example.com/bad",
+        ),
+        SimpleNamespace(
+            type="url_citation",
+            start_index=999,
+            end_index=1000,
+            title="Malformed",
+            url="https://example.com/malformed",
+        ),
+        SimpleNamespace(
+            type="url_citation",
+            start_index=broken_start,
+            end_index=broken_start + len("BROKEN"),
+            title="Malformed URL",
+            url="https://[",
+        ),
+        SimpleNamespace(type="file_citation"),
+    ]
+    response = SimpleNamespace(
+        id="response-1",
+        output_text=text,
+        output=[
+            SimpleNamespace(type="web_search_call"),
+            SimpleNamespace(
+                type="message",
+                content=[
+                    SimpleNamespace(
+                        type="output_text",
+                        text=text,
+                        annotations=annotations,
+                    )
+                ],
+            ),
+        ],
+    )
+    create = AsyncMock(return_value=response)
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(backend_handlers, "openai_client", client)
+
+    result = await backend_handlers._async_ask_llm(
+        "question",
+        False,
+        "gpt-test",
+        store_context=True,
+        allow_web_search=True,
+    )
+
+    assert result == backend_handlers.LLMResult(
+        "oai: First [Paper\\_One](https://example.com/one), "
+        "second [Paper \\[Two\\]](https://example.com/two), "
+        "bad BAD and BROKEN.",
+        "response-1",
+    )
+    assert "duplicate" not in result.text.lower()
+
+
+async def test_openai_search_retries_without_tool_when_model_rejects_it(
+    monkeypatch,
+):
+    class FakeBadRequestError(Exception):
+        def __init__(self, param):
+            self.param = param
+
+    response = SimpleNamespace(id="response-2", output_text="fallback answer")
+    create = AsyncMock(side_effect=[FakeBadRequestError("tools[0].type"), response])
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(backend_handlers, "BadRequestError", FakeBadRequestError)
+    monkeypatch.setattr(backend_handlers, "openai_client", client)
+
+    result = await backend_handlers._async_ask_llm(
+        "question",
+        False,
+        "gpt-test",
+        previous_context_id="response-1",
+        store_context=True,
+        allow_web_search=True,
+    )
+
+    assert result == backend_handlers.LLMResult(
+        f"oai: {backend_handlers.OPENAI_SEARCH_FALLBACK_NOTICE}\n\nfallback answer",
+        "response-2",
+    )
+    assert create.await_count == 2
+    assert create.await_args_list[0].kwargs == {
+        "model": "gpt-test",
+        "input": "question",
+        "store": True,
+        "previous_response_id": "response-1",
+        "tools": [{"type": "web_search"}],
+        "tool_choice": "auto",
+    }
+    assert create.await_args_list[1].kwargs == {
+        "model": "gpt-test",
+        "input": "question",
+        "store": True,
+        "previous_response_id": "response-1",
+    }
+
+
+async def test_openai_search_does_not_retry_unrelated_bad_request(monkeypatch):
+    class FakeBadRequestError(Exception):
+        param = "model"
+
+    create = AsyncMock(side_effect=FakeBadRequestError())
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(backend_handlers, "BadRequestError", FakeBadRequestError)
+    monkeypatch.setattr(backend_handlers, "openai_client", client)
+
+    result = await backend_handlers._async_ask_llm(
+        "question",
+        False,
+        "gpt-test",
+        store_context=True,
+        allow_web_search=True,
+    )
+
+    assert result == backend_handlers.LLMResult(
+        "⚠️ API request failed. Please try again.",
+        None,
+        succeeded=False,
+    )
+    assert create.await_count == 1
 
 
 async def test_gemini_interaction_adds_deduplicated_sources(monkeypatch):
