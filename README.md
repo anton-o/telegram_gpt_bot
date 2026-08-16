@@ -20,31 +20,37 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
   3. receive the response, split into multiple Telegram messages when necessary
 
 
-# Environment 
-  python > 3.8
-  
-  openai
-  python-telegram-bot
-  google-genai
+# Environment
+  Python 3.11.15
+
+  uv 0.11.7
 
 # Development and tests
-Create a virtual environment and install the development dependencies:
+Install uv 0.11.7, then run:
+
+Install the pinned Python version and synchronize the locked development
+environment:
   ```bash
-  python3 -m venv .venv
-  source .venv/bin/activate
-  python -m pip install -r requirements-dev.txt
+  make bootstrap
   ```
 
 Run the unit tests:
   ```bash
-  pytest
+  make check
   ```
+
+`make check` verifies the uv lockfile, Ruff formatting and lint, Python syntax,
+and the same coverage-enabled test suite used by CI. Environment activation is
+optional; use `uv run python main.py` to run the bot.
+
+Use `uv add <package>` for runtime dependencies and `uv add --dev <package>` for
+development dependencies. Commit both `pyproject.toml` and `uv.lock`. The
+requirements files remain temporarily for rollback of the legacy server setup.
 
 The unit tests use fake credentials and mocked API clients. They do not call
 Telegram, OpenAI, Gemini, or Google Search, and do not require repository
-secrets. GitHub Actions runs the suite automatically when a pull request is
-opened. After an ordinary branch push, a user with repository write access can
-run it manually from the Actions tab by selecting the pushed branch.
+secrets. GitHub Actions runs the suite for pull requests and pushes to `main`.
+It can also be started manually for another branch from the Actions tab.
 
 # setup script as a service
   nano /lib/systemd/system/tlggptbot.service

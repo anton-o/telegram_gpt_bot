@@ -3,6 +3,7 @@ deploy_config.cfg
 /secrets/
 __pycache__
 .venv/
+.uv-cache/
 .pytest_cache/
 .coverage
 coverage.xml
