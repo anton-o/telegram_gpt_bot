@@ -1,7 +1,6 @@
 import sys
 from types import ModuleType
 
-
 fake_secrets = ModuleType("bot_secrets")
 fake_secrets.BOT_TOKEN = "test-telegram-token"
 fake_secrets.BOT_NAME = "test_bot"

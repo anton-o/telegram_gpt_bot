@@ -42,9 +42,7 @@ async def test_private_prompt_uses_selected_openai_model(monkeypatch):
     ask = AsyncMock(return_value="oai: answer")
     monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
     update = make_update("question")
-    context = make_context(
-        user_data={"use_gemini": False, "oai_model": "gpt-test"}
-    )
+    context = make_context(user_data={"use_gemini": False, "oai_model": "gpt-test"})
 
     await backend_handlers.gpt(update, context)
 

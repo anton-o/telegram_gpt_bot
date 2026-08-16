@@ -1,4 +1,6 @@
+# Legacy pip fallback. Development and CI use the uv dev dependency group.
 -r requirements.txt
 pytest==8.4.1
 pytest-asyncio==1.1.0
 pytest-cov==6.2.1
+ruff==0.16.0

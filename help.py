@@ -9,14 +9,15 @@ help_admin_message = (
     + "/sbackend - set backend, 'gemini' or 'openai'"
 )
 
-help_message = ("Commands:\n"
-                + "/start\n"
-                + "/src - github repo URL\n"
-                )
+help_message = "Commands:\n" + "/start\n" + "/src - github repo URL\n"
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
-    message = help_message + help_admin_message if update.effective_user.id in _admins else help_message
+    message = (
+        help_message + help_admin_message
+        if update.effective_user.id in _admins
+        else help_message
+    )
 
     await update.message.reply_text(message)
