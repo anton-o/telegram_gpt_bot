@@ -141,7 +141,6 @@ done <deploy/runtime-versions.conf
 required_files=(
     .python-version
     backend_handlers.py
-    cleanup-remote.sh
     deploy-remote.sh
     help.py
     main.py
@@ -186,7 +185,6 @@ systemctl is-active --quiet "$service" || { echo "service is inactive" >&2; exit
     echo "Python pin drift requires an explicit runtime upgrade" >&2; exit 1;
 }
 marker="$app_dir/.deployment-info"
-[[ -f "$marker" ]] || marker="$app_dir/.uv-migration-complete"
 [[ -f "$marker" && ! -L "$marker" ]] || { echo "missing deployment marker" >&2; exit 1; }
 marker_uv="$(awk -F= '$1 == "UV_VERSION" {print $2}' "$marker")"
 marker_python="$(awk -F= '$1 == "PYTHON_VERSION" {print $2}' "$marker")"
@@ -207,7 +205,6 @@ REMOTE
 }
 
 remote_preflight
-ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" bash -s -- audit <cleanup-remote.sh
 if ((PREFLIGHT_ONLY)); then
     echo "Preflight passed; no server changes were made."
     exit 0
@@ -221,7 +218,6 @@ for required_file in "${required_files[@]}"; do
     install -m 0644 "$required_file" "$LOCAL_BUNDLE/$required_file"
 done
 chmod 0755 "$LOCAL_BUNDLE/deploy-remote.sh"
-chmod 0755 "$LOCAL_BUNDLE/cleanup-remote.sh"
 lock_hash="$($checksum_command uv.lock | awk '{print $1}')"
 printf 'DEPLOYMENT_ID=%s\nGIT_COMMIT=%s\nLOCK_SHA256=%s\n' \
     "$deployment_id" "$commit_id" "$lock_hash" >"$LOCAL_BUNDLE/DEPLOYMENT_METADATA"
@@ -244,11 +240,6 @@ if ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" bash \
     echo "Deployment $deployment_id completed successfully."
 else
     status=$?
-    if ((status == 20)); then
-        echo "Deployment succeeded, but automatic migration cleanup failed." >&2
-        echo "Diagnostics: $remote_staging" >&2
-    else
-        echo "Deployment failed with status $status; diagnostics: $remote_staging" >&2
-    fi
+    echo "Deployment failed with status $status; diagnostics: $remote_staging" >&2
     exit "$status"
 fi

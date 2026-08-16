@@ -8,16 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_shell_scripts_have_valid_bash_syntax():
-    scripts = [
-        "cleanup-remote.sh",
-        "deploy-cleanup.sh",
-        "deploy.sh",
-        "deploy-migrate.sh",
-        "deploy-remote.sh",
-        "migrate.sh",
-        "start.sh",
-        "stop.sh",
-    ]
+    scripts = ["deploy.sh", "deploy-remote.sh"]
 
     subprocess.run(
         ["bash", "-n", *(str(PROJECT_ROOT / script) for script in scripts)],
@@ -25,27 +16,13 @@ def test_shell_scripts_have_valid_bash_syntax():
     )
 
 
-def test_migration_scripts_are_executable():
-    for script in (
-        "cleanup-remote.sh",
-        "deploy-cleanup.sh",
-        "deploy-migrate.sh",
-        "deploy-remote.sh",
-        "deploy.sh",
-        "migrate.sh",
-    ):
+def test_deployment_scripts_are_executable():
+    for script in ("deploy.sh", "deploy-remote.sh"):
         assert os.access(PROJECT_ROOT / script, os.X_OK)
 
 
-def test_migration_scripts_expose_help_without_side_effects():
-    for script in (
-        "cleanup-remote.sh",
-        "deploy-cleanup.sh",
-        "deploy-migrate.sh",
-        "deploy-remote.sh",
-        "deploy.sh",
-        "migrate.sh",
-    ):
+def test_deployment_scripts_expose_help_without_side_effects():
+    for script in ("deploy.sh", "deploy-remote.sh"):
         result = subprocess.run(
             [str(PROJECT_ROOT / script), "--help"],
             check=True,
@@ -63,26 +40,17 @@ def test_migration_scripts_expose_help_without_side_effects():
         ("REMOTE_HOST=one\nREMOTE_HOST=two\n", "duplicate configuration key"),
     ],
 )
-@pytest.mark.parametrize(
-    ("script", "extra_arguments"),
-    [
-        ("deploy-migrate.sh", []),
-        ("deploy.sh", []),
-        ("deploy-cleanup.sh", ["--preflight"]),
-    ],
-)
 def test_deployment_commands_reject_unsafe_config_before_network_access(
-    tmp_path, contents, expected_error, script, extra_arguments
+    tmp_path, contents, expected_error
 ):
     config = tmp_path / "deploy.cfg"
     config.write_text(contents)
 
     result = subprocess.run(
         [
-            str(PROJECT_ROOT / script),
+            str(PROJECT_ROOT / "deploy.sh"),
             "--config",
             str(config),
-            *extra_arguments,
         ],
         check=False,
         capture_output=True,
@@ -128,38 +96,7 @@ def test_routine_deploy_is_staged_and_main_only():
     assert "uv pin drift requires an explicit runtime upgrade" in remote_deploy
     assert 'NEW_APP="${APP_DIR}.new.${DEPLOYMENT_ID}"' in remote_deploy
     assert "rolling back" in remote_deploy
-
-
-def test_cleanup_is_a_one_off_automatic_post_deploy_bridge():
-    local_cleanup = (PROJECT_ROOT / "deploy-cleanup.sh").read_text()
-    remote_cleanup = (PROJECT_ROOT / "cleanup-remote.sh").read_text()
-    local_deploy = (PROJECT_ROOT / "deploy.sh").read_text()
-    remote_deploy = (PROJECT_ROOT / "deploy-remote.sh").read_text()
-
-    assert "--execute" not in local_cleanup
-    assert "audit <cleanup-remote.sh" in local_deploy
-    assert "cleanup-remote.sh" in local_deploy
-    assert 'bash "$STAGING_DIR/cleanup-remote.sh" auto' in remote_deploy
-    assert remote_deploy.index("CUTOVER_STARTED=0") < remote_deploy.index(
-        'bash "$STAGING_DIR/cleanup-remote.sh" auto'
-    )
-    assert "SOAK_SECONDS" not in remote_cleanup
-    assert ".migration-cleanup-in-progress" in remote_cleanup
-    assert ".migration-cleanup-complete" in remote_cleanup
-    assert "CLEANUP_FAILURE_STATUS=20" in remote_cleanup
-    assert "exactly one routine rollback backup is required" in remote_cleanup
-
-
-def test_cleanup_wrapper_rejects_destructive_mode():
-    result = subprocess.run(
-        [str(PROJECT_ROOT / "deploy-cleanup.sh"), "--execute"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert "unknown argument" in result.stderr
+    assert "health_start=\"$(date '+%Y-%m-%d %H:%M:%S')\"" in remote_deploy
 
 
 def test_runtime_version_pins_stay_aligned():
