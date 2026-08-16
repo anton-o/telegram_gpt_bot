@@ -1,2 +1,5 @@
-192.0.0.10
-~/.ssh/id_ed25519_tlgbot
+REMOTE_HOST=192.0.0.10
+REMOTE_USER=root
+SSH_KEY_PATH=~/.ssh/id_ed25519_tlgbot
+REMOTE_APP_DIR=/root/python
+SERVICE_NAME=tlggptbot.service

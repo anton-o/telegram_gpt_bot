@@ -41,6 +41,7 @@ make check
 - `make bootstrap` installs pinned Python and syncs the locked uv environment.
 - `make format` applies Ruff safe fixes and formatting.
 - `make lint` and `make format-check` run the non-mutating style gates.
+- `make scripts-check` validates deployment shell syntax.
 - `make test` runs the unit suite.
 - `make coverage` runs the same coverage command used by CI.
 - `make check` verifies the lock, formatting, lint, syntax, tests, and coverage.
@@ -69,3 +70,13 @@ commit real tokens, API keys, administrator IDs, group IDs, server addresses, or
 generated persistence databases. Use fake values and mocked clients in tests.
 Do not deploy, contact external APIs, push branches, or open pull requests unless
 the user explicitly requests it.
+
+## Server migration
+
+`deploy-migrate.sh` is the local orchestrator and `migrate.sh` is its remote,
+root-only worker. The migration is deliberately staged outside `/root/python`
+and must preserve `/root/ve_tlg`, the old systemd unit, and server-side
+`bot_secrets.py` for rollback. Do not broaden the accepted application or
+service paths without an explicit migration design change. Keep
+`deploy/runtime-versions.conf`, `.python-version`, and the CI uv pin aligned;
+the deployment tests enforce this contract.

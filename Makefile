@@ -1,8 +1,7 @@
 UV ?= uv
-UV_VERSION ?= 0.11.7
-PYTHON_VERSION ?= 3.11.15
+include deploy/runtime-versions.conf
 
-.PHONY: bootstrap uv-version lock lock-check format format-check lint compile test coverage check clean-test-artifacts
+.PHONY: bootstrap uv-version lock lock-check format format-check lint scripts-check compile test coverage check clean-test-artifacts
 
 uv-version:
 	@actual="$$($(UV) --version | awk '{print $$2}')"; \
@@ -31,6 +30,9 @@ format-check: uv-version
 lint: uv-version
 	$(UV) run --locked ruff check .
 
+scripts-check:
+	bash -n deploy.sh deploy-migrate.sh migrate.sh start.sh stop.sh
+
 compile: uv-version
 	$(UV) run --locked python -m compileall -q \
 		backend_handlers.py help.py main.py utils_handlers.py white_lists.py tests
@@ -49,7 +51,7 @@ coverage: uv-version
 		--cov-report=xml \
 		--cov-fail-under=95
 
-check: lock-check format-check lint compile coverage
+check: lock-check format-check lint scripts-check compile coverage
 
 clean-test-artifacts: uv-version
 	$(UV) run --locked coverage erase
