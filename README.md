@@ -4,26 +4,20 @@ Code based on the echobot example
 https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
 
 # Capabilities
-  1. communicates with the openAI gpt-models
-  2. can be used in telegram groups with many members
-  3. supports  "system role" for every member of a group
-  4. saves history of messages being sent with @botname
+  1. communicates with Google Gemini and OpenAI models
+  2. can be used in Telegram groups by mentioning the bot
+  3. supports private conversations for configured administrators
+  4. allows administrators to select the active backend and model
 
 # usage scenario
 ## Example
   1. /help
-  2. /sctx you're a theoretical physicist Leonard Susskind
-  3. @yourbotname what is the expected time for the black hole to disappear
-  .... some time
-  4. /gctx
-  5. /gctxhist
+  2. @yourbotname what is the expected time for a black hole to disappear
+  3. Wait for the response
 ## What's going on above
   1. get list of commands
-  2. set "system role", which will be given to gpt as a context with your question and a request to think step-by-step
-  3. your request,
-    be patient... due to request to explain step-by-step, it generates long responses which take up to 10-15 seconds to generate
-  4. get current system context, just in case you've forgotten it
-  5. list of historical contexts, just in case you'd like to reuse
+  2. send a request to the configured AI backend by mentioning the bot
+  3. receive the response, split into multiple Telegram messages when necessary
 
 
 # Environment 
@@ -31,6 +25,26 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
   
   openai
   python-telegram-bot
+  google-genai
+
+# Development and tests
+Create a virtual environment and install the development dependencies:
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements-dev.txt
+  ```
+
+Run the unit tests:
+  ```bash
+  pytest
+  ```
+
+The unit tests use fake credentials and mocked API clients. They do not call
+Telegram, OpenAI, Gemini, or Google Search, and do not require repository
+secrets. GitHub Actions runs the suite automatically when a pull request is
+opened. After an ordinary branch push, a user with repository write access can
+run it manually from the Actions tab by selecting the pushed branch.
 
 # setup script as a service
   nano /lib/systemd/system/tlggptbot.service
