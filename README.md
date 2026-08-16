@@ -6,8 +6,26 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
 # Capabilities
   1. communicates with Google Gemini and OpenAI models
   2. can be used in Telegram groups by mentioning the bot
-  3. supports private conversations for configured administrators
+  3. supports persistent private conversations for configured administrators
   4. allows administrators to select the active backend and model
+
+## Private conversation context
+
+Private administrator chats reuse provider-side conversation context. The bot
+stores only the latest OpenAI response ID or Gemini interaction ID and its
+metadata; it does not store prompt or response text locally. Group mentions are
+always independent, stateless requests.
+
+A private conversation starts over after 30 minutes without a successful turn,
+when `/reset` is used, or when the active provider or model changes. The bot
+announces automatically started conversations. `/reset` and selection commands
+already confirm their reset directly, so the next prompt does not repeat the
+announcement.
+
+User settings and private context references survive process restarts. Set
+`TLGGPTBOT_STATE_PATH=.state/user-state.json` when running locally; `.state/` is
+ignored by Git. Production uses `/var/lib/tlggptbot/user-state.json` with
+root-only permissions.
 
 # usage scenario
 ## Example
@@ -80,7 +98,11 @@ locked production dependencies, and validates imports before stopping the
 service. It then performs a short systemd cutover and automatically restores
 the previous application and unit if health checks fail. Only the immediately
 previous successful release is retained under
-`/root/tlggptbot-backups/releases`.
+`/root/tlggptbot-backups/releases`. Persistent user and conversation state stays
+outside release directories at `/var/lib/tlggptbot/user-state.json`, so cutover,
+rollback, and old-release pruning do not move or delete it. The first deployment
+of this feature starts with default selections because prior settings existed
+only in process memory.
 
 Routine deployments never upgrade uv or Python. A mismatch with
 `deploy/runtime-versions.conf` aborts and requires a separately reviewed runtime

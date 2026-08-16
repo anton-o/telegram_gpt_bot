@@ -19,15 +19,22 @@ allow-list restrictions in `white_lists.py`.
 
 ## Per-user state contract
 
-`context.user_data` currently contains only in-memory user preferences:
-`use_gemini`, `gemini_model`, and `oai_model`. It does not preserve conversation
-history and it does not survive a process restart.
+`state_store.py` persists user preferences by `user_id` and private conversation
+references by `(chat_id, user_id)`. Conversation records contain only provider
+context IDs and metadata; prompt and response text is not stored locally. Group
+requests are stateless and must never read or write conversation records.
 
-Do not treat user-level data as conversation-level data. New conversation state
-must be isolated by at least `(chat_id, user_id)` and, where applicable, by
-Telegram message thread. Never allow context to leak between users or chats.
-Any persistent conversation feature must define retention, reset, concurrency,
-and migration behavior and include isolation tests.
+Private turns for one user are serialized. A successful turn replaces the saved
+provider context ID atomically. Provider errors leave the last successful context
+unchanged. Conversation context resets after 30 minutes of inactivity, on
+`/reset`, and whenever the active provider or model changes. State survives
+process restarts and deployments in `/var/lib/tlggptbot/user-state.json`.
+
+Do not treat user-level settings as conversation-level data. Preserve isolation
+by at least `(chat_id, user_id)` and, if group or forum conversations are ever
+added, by Telegram message thread. Never allow context to leak between users or
+chats. Any state schema change must define migration behavior and include
+restart, reset, concurrency, malformed-file, and isolation tests.
 
 ## Local setup and validation
 

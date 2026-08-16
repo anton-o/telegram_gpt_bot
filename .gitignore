@@ -8,3 +8,5 @@ __pycache__
 .coverage
 coverage.xml
 htmlcov/
+/.state/
+/user-state.json

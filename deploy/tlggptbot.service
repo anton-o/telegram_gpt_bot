@@ -13,6 +13,7 @@ RestartSec=5
 TimeoutStopSec=30
 KillSignal=SIGINT
 Environment=PYTHONUNBUFFERED=1
+Environment=TLGGPTBOT_STATE_PATH=/var/lib/tlggptbot/user-state.json
 UMask=0077
 
 [Install]

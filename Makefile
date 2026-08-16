@@ -35,7 +35,8 @@ scripts-check:
 
 compile: uv-version
 	$(UV) run --locked python -m compileall -q \
-		backend_handlers.py help.py main.py utils_handlers.py white_lists.py tests
+		backend_handlers.py help.py main.py state_store.py utils_handlers.py \
+		white_lists.py tests
 
 test: uv-version
 	$(UV) run --locked pytest
@@ -45,6 +46,7 @@ coverage: uv-version
 		--cov=backend_handlers \
 		--cov=help \
 		--cov=main \
+		--cov=state_store \
 		--cov=utils_handlers \
 		--cov=white_lists \
 		--cov-report=term-missing \
