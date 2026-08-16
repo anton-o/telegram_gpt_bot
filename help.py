@@ -6,7 +6,8 @@ from bot_secrets import _admins
 help_admin_message = (
     "/whoami - get user info, debug\n"
     + "/smodel - set current model, lists models if no fit\n"
-    + "/sbackend - set backend, 'gemini' or 'openai'"
+    + "/sbackend - set backend, 'gemini' or 'openai'\n"
+    + "/reset - start a new private conversation"
 )
 
 help_message = "Commands:\n" + "/start\n" + "/src - github repo URL\n"

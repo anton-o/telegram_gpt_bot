@@ -145,6 +145,7 @@ required_files=(
     help.py
     main.py
     pyproject.toml
+    state_store.py
     utils_handlers.py
     uv.lock
     white_lists.py
@@ -194,6 +195,16 @@ marker_python="$(awk -F= '$1 == "PYTHON_VERSION" {print $2}' "$marker")"
 for path in /root/tlggptbot-backups /root/tlggptbot-backups/releases; do
     [[ ! -L "$path" ]] || { echo "refusing symbolic link: $path" >&2; exit 1; }
 done
+state_dir=/var/lib/tlggptbot
+state_file="$state_dir/user-state.json"
+[[ ! -L "$state_dir" ]] || { echo "invalid state directory" >&2; exit 1; }
+[[ ! -e "$state_dir" || -d "$state_dir" ]] || {
+    echo "invalid state directory" >&2; exit 1;
+}
+[[ ! -L "$state_file" ]] || { echo "invalid state file" >&2; exit 1; }
+[[ ! -e "$state_file" || -f "$state_file" ]] || {
+    echo "invalid state file" >&2; exit 1;
+}
 for disk_path in /root /var; do
     available_kb="$(df -Pk "$disk_path" | awk 'NR == 2 {print $4}')"
     [[ "$available_kb" =~ ^[0-9]+$ && "$available_kb" -ge 1048576 ]] || {

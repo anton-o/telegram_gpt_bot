@@ -2,9 +2,16 @@ import logging
 
 from telegram import __version__ as TG_VER
 
-from backend_handlers import bot_mentioned, gpt, set_backend, set_current_model
+from backend_handlers import (
+    bot_mentioned,
+    gpt,
+    reset_conversation,
+    set_backend,
+    set_current_model,
+)
 from bot_secrets import BOT_NAME, BOT_TOKEN
 from help import help_command
+from state_store import state_store
 from utils_handlers import get_repo_address, start, whoami
 from white_lists import admins_filter, groups_filter
 
@@ -41,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     """Start the bot."""
+    state_store.initialize()
     application = Application.builder().token(BOT_TOKEN).build()
 
     universal_filters = admins_filter | groups_filter
@@ -64,6 +72,13 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler("sbackend", set_backend, filters=admins_filter)
+    )
+    application.add_handler(
+        CommandHandler(
+            "reset",
+            reset_conversation,
+            filters=admins_filter & filters.ChatType.PRIVATE,
+        )
     )
 
     # Run the bot until the user presses Ctrl-C

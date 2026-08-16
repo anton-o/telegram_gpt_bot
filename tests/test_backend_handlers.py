@@ -1,27 +1,51 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 import backend_handlers
+from state_store import FileStateStore
 
 
-def make_update(text="question", entities=None):
+def make_update(
+    text="question",
+    entities=None,
+    *,
+    user_id=1001,
+    chat_id=None,
+):
     message = SimpleNamespace(
         text=text,
         entities=entities,
         reply_text=AsyncMock(),
     )
-    return SimpleNamespace(message=message)
-
-
-def make_context(args=None, user_data=None):
     return SimpleNamespace(
-        args=[] if args is None else args,
-        user_data={} if user_data is None else user_data,
+        message=message,
+        effective_user=SimpleNamespace(id=user_id),
+        effective_chat=SimpleNamespace(id=user_id if chat_id is None else chat_id),
     )
 
 
-async def test_private_prompt_uses_default_gemini_backend(monkeypatch):
-    ask = AsyncMock(return_value="gmn: answer")
+def make_context(args=None):
+    return SimpleNamespace(args=[] if args is None else args, user_data={})
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_store(tmp_path, monkeypatch):
+    store = FileStateStore(tmp_path / "user-state.json")
+    monkeypatch.setattr(backend_handlers, "state_store", store)
+    backend_handlers._user_locks.clear()
+    return store
+
+
+async def test_first_private_prompt_starts_persistent_gemini_context(
+    monkeypatch, isolated_state_store
+):
+    ask = AsyncMock(
+        return_value=backend_handlers.LLMResult("gmn: answer", "gemini-context-1")
+    )
     monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
     update = make_update("What is a black hole?")
 
@@ -31,22 +55,111 @@ async def test_private_prompt_uses_default_gemini_backend(monkeypatch):
         "What is a black hole?",
         True,
         backend_handlers.DEFAULT_GEMINI_MODEL,
+        previous_context_id=None,
+        store_context=True,
     )
-    update.message.reply_text.assert_awaited_once_with(
-        "gmn: answer",
-        parse_mode="Markdown",
+    assert update.message.reply_text.await_args_list[0].args == (
+        backend_handlers.NEW_CONVERSATION_NOTICE,
     )
+    assert update.message.reply_text.await_args_list[1].args == ("gmn: answer",)
+    conversation = await isolated_state_store.get_conversation(1001, 1001)
+    assert conversation["remote_context_id"] == "gemini-context-1"
+    assert conversation["suppress_next_start_notice"] is False
 
 
-async def test_private_prompt_uses_selected_openai_model(monkeypatch):
-    ask = AsyncMock(return_value="oai: answer")
+async def test_second_private_prompt_continues_without_notice(monkeypatch):
+    ask = AsyncMock(
+        side_effect=[
+            backend_handlers.LLMResult("gmn: first", "context-1"),
+            backend_handlers.LLMResult("gmn: second", "context-2"),
+        ]
+    )
     monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
-    update = make_update("question")
-    context = make_context(user_data={"use_gemini": False, "oai_model": "gpt-test"})
 
-    await backend_handlers.gpt(update, context)
+    await backend_handlers.gpt(make_update("first"), make_context())
+    second_update = make_update("second")
+    await backend_handlers.gpt(second_update, make_context())
 
-    ask.assert_awaited_once_with("question", False, "gpt-test")
+    assert ask.await_args_list[1].kwargs["previous_context_id"] == "context-1"
+    second_update.message.reply_text.assert_awaited_once_with(
+        "gmn: second", parse_mode="Markdown"
+    )
+
+
+async def test_private_context_is_isolated_between_users(monkeypatch):
+    ask = AsyncMock(
+        side_effect=[
+            backend_handlers.LLMResult("first user", "user-1-context"),
+            backend_handlers.LLMResult("second user", "user-2-context"),
+            backend_handlers.LLMResult("first user again", "user-1-next"),
+            backend_handlers.LLMResult("second user again", "user-2-next"),
+        ]
+    )
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
+
+    await backend_handlers.gpt(make_update(user_id=1001), make_context())
+    await backend_handlers.gpt(make_update(user_id=2002), make_context())
+    await backend_handlers.gpt(make_update(user_id=1001), make_context())
+    await backend_handlers.gpt(make_update(user_id=2002), make_context())
+
+    assert [call.kwargs["previous_context_id"] for call in ask.await_args_list] == [
+        None,
+        None,
+        "user-1-context",
+        "user-2-context",
+    ]
+
+
+async def test_private_turns_for_one_user_are_serialized(monkeypatch):
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    previous_ids = []
+
+    async def ask(*args, previous_context_id=None, **kwargs):
+        previous_ids.append(previous_context_id)
+        if len(previous_ids) == 1:
+            first_started.set()
+            await release_first.wait()
+            return backend_handlers.LLMResult("first", "context-1")
+        return backend_handlers.LLMResult("second", "context-2")
+
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
+
+    first = asyncio.create_task(
+        backend_handlers.gpt(make_update("first"), make_context())
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        backend_handlers.gpt(make_update("second"), make_context())
+    )
+    await asyncio.sleep(0)
+    assert previous_ids == [None]
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert previous_ids == [None, "context-1"]
+
+
+async def test_private_prompt_uses_persisted_openai_selection(
+    monkeypatch, isolated_state_store
+):
+    await isolated_state_store.save_user(
+        1001,
+        {
+            "use_gemini": False,
+            "gemini_model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "oai_model": "gpt-test",
+        },
+    )
+    ask = AsyncMock(
+        return_value=backend_handlers.LLMResult("oai: answer", "response-1")
+    )
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
+
+    await backend_handlers.gpt(make_update(), make_context())
+
+    assert ask.await_args.args[:3] == ("question", False, "gpt-test")
 
 
 async def test_private_empty_message_is_ignored(monkeypatch):
@@ -60,11 +173,17 @@ async def test_private_empty_message_is_ignored(monkeypatch):
     update.message.reply_text.assert_not_awaited()
 
 
-async def test_group_mention_extracts_prompt(monkeypatch):
-    ask = AsyncMock(return_value="gmn: answer")
+async def test_group_mention_is_stateless(monkeypatch, isolated_state_store):
+    ask = AsyncMock(
+        return_value=backend_handlers.LLMResult("gmn: answer", context_id=None)
+    )
     monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
     mention = SimpleNamespace(offset=0, length=len("@test_bot"))
-    update = make_update("@test_bot   explain this", [mention])
+    update = make_update(
+        "@test_bot   explain this",
+        [mention],
+        chat_id=-2001,
+    )
 
     await backend_handlers.bot_mentioned(update, make_context())
 
@@ -72,25 +191,22 @@ async def test_group_mention_extracts_prompt(monkeypatch):
         "explain this",
         True,
         backend_handlers.DEFAULT_GEMINI_MODEL,
+        store_context=False,
     )
+    assert await isolated_state_store.get_conversation(-2001, 1001) is None
 
 
-async def test_group_mention_without_prompt_is_ignored(monkeypatch):
+@pytest.mark.parametrize(
+    ("text", "entities"),
+    [
+        ("@test_bot", [SimpleNamespace(offset=0, length=len("@test_bot"))]),
+        ("ordinary group message", []),
+    ],
+)
+async def test_group_message_without_prompt_is_ignored(monkeypatch, text, entities):
     ask = AsyncMock()
     monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
-    mention = SimpleNamespace(offset=0, length=len("@test_bot"))
-    update = make_update("@test_bot", [mention])
-
-    await backend_handlers.bot_mentioned(update, make_context())
-
-    ask.assert_not_awaited()
-    update.message.reply_text.assert_not_awaited()
-
-
-async def test_group_message_without_entities_is_ignored(monkeypatch):
-    ask = AsyncMock()
-    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
-    update = make_update("ordinary group message", [])
+    update = make_update(text, entities, chat_id=-2001)
 
     await backend_handlers.bot_mentioned(update, make_context())
 
@@ -101,55 +217,130 @@ async def test_response_is_split_at_telegram_limit(monkeypatch):
     monkeypatch.setattr(
         backend_handlers,
         "_async_ask_llm",
-        AsyncMock(return_value="x" * 5000),
+        AsyncMock(return_value=backend_handlers.LLMResult("x" * 5000, "context-1")),
     )
     update = make_update()
 
     await backend_handlers.gpt(update, make_context())
 
-    chunks = [call.args[0] for call in update.message.reply_text.await_args_list]
+    chunks = [call.args[0] for call in update.message.reply_text.await_args_list[1:]]
     assert [len(chunk) for chunk in chunks] == [4096, 904]
 
 
-async def test_set_backend_reports_and_changes_backend():
-    context = make_context()
+async def test_inactive_conversation_expires_and_announces(
+    monkeypatch, isolated_state_store
+):
+    old_timestamp = (
+        datetime.now(timezone.utc) - backend_handlers.CONVERSATION_TIMEOUT
+    ).isoformat()
+    await isolated_state_store.save_conversation(
+        1001,
+        1001,
+        {
+            "provider": "gemini",
+            "model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "remote_context_id": "old-context",
+            "last_successful_turn_at": old_timestamp,
+            "suppress_next_start_notice": False,
+        },
+    )
+    ask = AsyncMock(
+        return_value=backend_handlers.LLMResult("gmn: answer", "new-context")
+    )
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
     update = make_update()
 
-    await backend_handlers.set_backend(update, context)
+    await backend_handlers.gpt(update, make_context())
+
+    assert ask.await_args.kwargs["previous_context_id"] is None
+    assert update.message.reply_text.await_args_list[0].args == (
+        backend_handlers.NEW_CONVERSATION_NOTICE,
+    )
+
+
+async def test_reset_suppresses_next_start_notice(monkeypatch, isolated_state_store):
+    update = make_update()
+    await backend_handlers.reset_conversation(update, make_context())
+    assert "Conversation reset" in update.message.reply_text.await_args.args[0]
+
+    ask = AsyncMock(
+        return_value=backend_handlers.LLMResult("gmn: answer", "new-context")
+    )
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
+    prompt_update = make_update()
+    await backend_handlers.gpt(prompt_update, make_context())
+
+    prompt_update.message.reply_text.assert_awaited_once_with(
+        "gmn: answer", parse_mode="Markdown"
+    )
+    conversation = await isolated_state_store.get_conversation(1001, 1001)
+    assert conversation["suppress_next_start_notice"] is False
+
+
+async def test_backend_change_resets_context_and_same_value_preserves_it(
+    isolated_state_store,
+):
+    await isolated_state_store.save_conversation(
+        1001,
+        1001,
+        {
+            "provider": "gemini",
+            "model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "remote_context_id": "existing-context",
+            "last_successful_turn_at": datetime.now(timezone.utc).isoformat(),
+            "suppress_next_start_notice": False,
+        },
+    )
+    update = make_update()
+
+    await backend_handlers.set_backend(update, make_context(["gemini"]))
+    preserved = await isolated_state_store.get_conversation(1001, 1001)
+    assert preserved["remote_context_id"] == "existing-context"
+
+    await backend_handlers.set_backend(update, make_context(["openai"]))
+    reset = await isolated_state_store.get_conversation(1001, 1001)
+    assert reset["remote_context_id"] is None
+    assert reset["suppress_next_start_notice"] is True
+    assert "Conversation reset" in update.message.reply_text.await_args.args[0]
+
+
+async def test_set_backend_reports_current_and_rejects_unknown():
+    update = make_update()
+
+    await backend_handlers.set_backend(update, make_context())
     assert "Current backend is Gemini" in update.message.reply_text.await_args.args[0]
 
-    context.args = ["openai"]
-    await backend_handlers.set_backend(update, context)
-    assert context.user_data["use_gemini"] is False
-
-    context.args = ["gemini"]
-    await backend_handlers.set_backend(update, context)
-    assert context.user_data["use_gemini"] is True
-
-
-async def test_set_backend_rejects_unknown_value():
-    context = make_context(args=["other"])
-    update = make_update()
-
-    await backend_handlers.set_backend(update, context)
-
+    await backend_handlers.set_backend(update, make_context(["other"]))
     assert "Invalid backend" in update.message.reply_text.await_args.args[0]
-    assert "use_gemini" not in context.user_data
 
 
-async def test_set_model_saves_model_for_active_backend():
-    update = make_update()
-    gemini_context = make_context(args=["gemini-test"])
-
-    await backend_handlers.set_current_model(update, gemini_context)
-    assert gemini_context.user_data["gemini_model"] == "gemini-test"
-
-    openai_context = make_context(
-        args=["gpt-test"],
-        user_data={"use_gemini": False},
+async def test_model_change_resets_context_and_same_value_preserves_it(
+    isolated_state_store,
+):
+    await isolated_state_store.save_conversation(
+        1001,
+        1001,
+        {
+            "provider": "gemini",
+            "model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "remote_context_id": "existing-context",
+            "last_successful_turn_at": datetime.now(timezone.utc).isoformat(),
+            "suppress_next_start_notice": False,
+        },
     )
-    await backend_handlers.set_current_model(update, openai_context)
-    assert openai_context.user_data["oai_model"] == "gpt-test"
+    update = make_update()
+
+    await backend_handlers.set_current_model(
+        update, make_context([backend_handlers.DEFAULT_GEMINI_MODEL])
+    )
+    preserved = await isolated_state_store.get_conversation(1001, 1001)
+    assert preserved["remote_context_id"] == "existing-context"
+
+    await backend_handlers.set_current_model(update, make_context(["gemini-test"]))
+    reset = await isolated_state_store.get_conversation(1001, 1001)
+    assert reset["remote_context_id"] is None
+    assert reset["model"] == "gemini-test"
+    assert "Conversation reset" in update.message.reply_text.await_args.args[0]
 
 
 async def test_openai_model_listing_filters_unrelated_models(monkeypatch):
@@ -164,10 +355,17 @@ async def test_openai_model_listing_filters_unrelated_models(monkeypatch):
         models=SimpleNamespace(list=AsyncMock(return_value=models_response))
     )
     monkeypatch.setattr(backend_handlers, "openai_client", client)
+    await backend_handlers.state_store.save_user(
+        1001,
+        {
+            "use_gemini": False,
+            "gemini_model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "oai_model": "gpt-test",
+        },
+    )
     update = make_update()
-    context = make_context(user_data={"use_gemini": False})
 
-    await backend_handlers.set_current_model(update, context)
+    await backend_handlers.set_current_model(update, make_context())
 
     result = update.message.reply_text.await_args_list[1].args[0]
     assert "gpt-test" in result
@@ -206,55 +404,69 @@ async def test_model_listing_reports_provider_error(monkeypatch):
         )
     )
     monkeypatch.setattr(backend_handlers, "openai_client", client)
+    await backend_handlers.state_store.save_user(
+        1001,
+        {
+            "use_gemini": False,
+            "gemini_model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "oai_model": "gpt-test",
+        },
+    )
     update = make_update()
-    context = make_context(user_data={"use_gemini": False})
 
-    await backend_handlers.set_current_model(update, context)
+    await backend_handlers.set_current_model(update, make_context())
 
     result = update.message.reply_text.await_args_list[1].args[0]
-    assert result == "⚠️ Failed to fetch the model list: provider unavailable"
+    assert result == "⚠️ Failed to fetch the model list. Please try again."
+    assert "provider unavailable" not in result
 
 
-async def test_openai_request_uses_single_user_message(monkeypatch):
-    response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))]
-    )
+async def test_openai_request_uses_responses_continuation(monkeypatch):
+    response = SimpleNamespace(id="response-2", output_text="answer")
     create = AsyncMock(return_value=response)
-    client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
     monkeypatch.setattr(backend_handlers, "openai_client", client)
 
     result = await backend_handlers._async_ask_llm(
         "question",
         False,
         "gpt-test",
+        previous_context_id="response-1",
+        store_context=True,
     )
 
-    assert result == "oai: answer"
+    assert result == backend_handlers.LLMResult("oai: answer", "response-2")
     create.assert_awaited_once_with(
         model="gpt-test",
-        messages=[{"role": "user", "content": "question"}],
+        input="question",
+        store=True,
+        previous_response_id="response-1",
     )
 
 
-async def test_gemini_request_adds_deduplicated_sources(monkeypatch):
-    first_web = SimpleNamespace(uri="https://example.com", title="Example")
-    duplicate_web = SimpleNamespace(uri="https://example.com", title="Duplicate")
-    metadata = SimpleNamespace(
-        grounding_chunks=[
-            SimpleNamespace(web=first_web),
-            SimpleNamespace(web=duplicate_web),
-        ]
+async def test_gemini_interaction_adds_deduplicated_sources(monkeypatch):
+    annotations = [
+        SimpleNamespace(
+            type="url_citation", url="https://example.com", title="Example"
+        ),
+        SimpleNamespace(
+            type="url_citation", url="https://example.com", title="Duplicate"
+        ),
+    ]
+    interaction = SimpleNamespace(
+        id="interaction-2",
+        output_text="answer",
+        steps=[
+            SimpleNamespace(
+                type="model_output",
+                content=[SimpleNamespace(annotations=annotations)],
+            )
+        ],
     )
-    response = SimpleNamespace(
-        text="answer",
-        candidates=[SimpleNamespace(grounding_metadata=metadata)],
-    )
-    generate = AsyncMock(return_value=response)
+    create = AsyncMock(return_value=interaction)
     client = SimpleNamespace(
         aio=SimpleNamespace(
-            models=SimpleNamespace(generate_content=generate),
+            interactions=SimpleNamespace(create=create),
         )
     )
     monkeypatch.setattr(backend_handlers, "gemini_client", client)
@@ -263,25 +475,131 @@ async def test_gemini_request_adds_deduplicated_sources(monkeypatch):
         "question",
         True,
         "gemini-test",
+        previous_context_id="interaction-1",
+        store_context=True,
     )
 
-    assert result.startswith("gmn: answer")
-    assert result.count("https://example.com") == 1
-    assert "Duplicate" in result
-    generate.assert_awaited_once()
-
-
-async def test_provider_error_is_returned_as_controlled_message(monkeypatch):
-    create = AsyncMock(side_effect=RuntimeError("provider unavailable"))
-    client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    assert result.text.startswith("gmn: answer")
+    assert result.text.count("https://example.com") == 1
+    assert "Duplicate" in result.text
+    assert result.context_id == "interaction-2"
+    create.assert_awaited_once_with(
+        model="gemini-test",
+        input="question",
+        generation_config={"temperature": 0.0},
+        tools=[{"type": "google_search"}],
+        store=True,
+        previous_interaction_id="interaction-1",
     )
+
+
+async def test_missing_provider_context_retries_once_and_announces(
+    monkeypatch, isolated_state_store
+):
+    await isolated_state_store.save_conversation(
+        1001,
+        1001,
+        {
+            "provider": "gemini",
+            "model": backend_handlers.DEFAULT_GEMINI_MODEL,
+            "remote_context_id": "missing-context",
+            "last_successful_turn_at": datetime.now(timezone.utc).isoformat(),
+            "suppress_next_start_notice": False,
+        },
+    )
+    ask = AsyncMock(
+        side_effect=[
+            backend_handlers.ContextUnavailableError(),
+            backend_handlers.LLMResult("gmn: answer", "replacement-context"),
+        ]
+    )
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
+    update = make_update()
+
+    await backend_handlers.gpt(update, make_context())
+
+    assert ask.await_count == 2
+    assert ask.await_args_list[1].kwargs.get("previous_context_id") is None
+    assert update.message.reply_text.await_args_list[0].args == (
+        backend_handlers.NEW_CONVERSATION_NOTICE,
+    )
+
+
+async def test_provider_failure_does_not_start_or_persist_conversation(
+    monkeypatch, isolated_state_store
+):
+    ask = AsyncMock(
+        return_value=backend_handlers.LLMResult(
+            "⚠️ API request failed. Please try again.",
+            None,
+            succeeded=False,
+        )
+    )
+    monkeypatch.setattr(backend_handlers, "_async_ask_llm", ask)
+    update = make_update()
+
+    await backend_handlers.gpt(update, make_context())
+
+    update.message.reply_text.assert_awaited_once_with(
+        "⚠️ API request failed. Please try again.", parse_mode="Markdown"
+    )
+    assert await isolated_state_store.get_conversation(1001, 1001) is None
+
+
+async def test_provider_404_with_context_is_classified(monkeypatch):
+    error = RuntimeError("missing")
+    error.status_code = 404
+    create = AsyncMock(side_effect=error)
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(backend_handlers, "openai_client", client)
+
+    with pytest.raises(backend_handlers.ContextUnavailableError):
+        await backend_handlers._async_ask_llm(
+            "question",
+            False,
+            "gpt-test",
+            previous_context_id="response-1",
+            store_context=True,
+        )
+
+
+async def test_provider_error_is_returned_without_internal_details(monkeypatch):
+    create = AsyncMock(side_effect=RuntimeError("secret provider payload"))
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
     monkeypatch.setattr(backend_handlers, "openai_client", client)
 
     result = await backend_handlers._async_ask_llm(
         "question",
         False,
         "gpt-test",
+        store_context=True,
     )
 
-    assert result == "⚠️ API Error: provider unavailable"
+    assert result == backend_handlers.LLMResult(
+        "⚠️ API request failed. Please try again.",
+        None,
+        succeeded=False,
+    )
+    assert "secret" not in result.text
+
+
+def test_expiration_rejects_missing_malformed_and_naive_timestamps():
+    now = datetime.now(timezone.utc)
+    base = {"remote_context_id": "context"}
+
+    assert backend_handlers._conversation_is_expired(base, now)
+    assert backend_handlers._conversation_is_expired(
+        {**base, "last_successful_turn_at": "invalid"}, now
+    )
+    assert backend_handlers._conversation_is_expired(
+        {**base, "last_successful_turn_at": datetime.now().isoformat()}, now
+    )
+    assert not backend_handlers._conversation_is_expired(
+        {
+            **base,
+            "last_successful_turn_at": (
+                now - backend_handlers.CONVERSATION_TIMEOUT + timedelta(seconds=1)
+            ).isoformat(),
+        },
+        now,
+    )

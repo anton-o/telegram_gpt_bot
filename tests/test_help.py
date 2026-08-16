@@ -32,3 +32,4 @@ async def test_admin_gets_admin_help():
     assert "/whoami" in message
     assert "/smodel" in message
     assert "/sbackend" in message
+    assert "/reset" in message

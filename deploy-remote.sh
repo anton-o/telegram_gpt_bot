@@ -9,6 +9,8 @@ readonly UV_BIN="/usr/local/bin/uv"
 readonly BACKUP_ROOT="/root/tlggptbot-backups/releases"
 readonly UV_PYTHON_INSTALL_DIR="/opt/uv/python"
 readonly UV_CACHE_DIR="/var/cache/uv"
+readonly STATE_DIR="/var/lib/tlggptbot"
+readonly STATE_FILE="$STATE_DIR/user-state.json"
 
 STAGING_DIR=""
 DEPLOYMENT_ID=""
@@ -89,6 +91,10 @@ done
 for path in "$BACKUP_ROOT" "$UV_PYTHON_INSTALL_DIR" "$UV_CACHE_DIR"; do
     [[ ! -L "$path" ]] || fail "refusing symbolic link: $path"
 done
+[[ ! -L "$STATE_DIR" ]] || fail "invalid state directory"
+[[ ! -e "$STATE_DIR" || -d "$STATE_DIR" ]] || fail "invalid state directory"
+[[ ! -L "$STATE_FILE" ]] || fail "invalid state file"
+[[ ! -e "$STATE_FILE" || -f "$STATE_FILE" ]] || fail "invalid state file"
 
 exec 9>/run/lock/tlggptbot-deploy.lock
 flock -n 9 || fail "another deployment is running"
@@ -148,7 +154,7 @@ NEW_APP="${APP_DIR}.new.${DEPLOYMENT_ID}"
 [[ ! -e "$NEW_APP" ]] || fail "staged application already exists"
 mkdir -m 0700 "$NEW_APP"
 for file in .python-version backend_handlers.py help.py main.py pyproject.toml \
-    utils_handlers.py uv.lock white_lists.py; do
+    state_store.py utils_handlers.py uv.lock white_lists.py; do
     install -o root -g root -m 0644 "$STAGING_DIR/$file" "$NEW_APP/$file"
 done
 install -o root -g root -m 0600 "$APP_DIR/bot_secrets.py" "$NEW_APP/bot_secrets.py"
@@ -159,7 +165,7 @@ export UV_PYTHON_INSTALL_DIR UV_CACHE_DIR
     "$UV_BIN" sync --locked --no-dev --python "$PYTHON_VERSION"
     [[ "$(.venv/bin/python --version)" == "Python $PYTHON_VERSION" ]]
     .venv/bin/python -m compileall -q \
-        backend_handlers.py help.py main.py utils_handlers.py white_lists.py
+        backend_handlers.py help.py main.py state_store.py utils_handlers.py white_lists.py
     .venv/bin/python -c "import main"
     "$UV_BIN" pip check --python .venv/bin/python
 )
@@ -169,6 +175,8 @@ BACKUP_DIR="$BACKUP_ROOT/$DEPLOYMENT_ID"
 [[ ! -e "$BACKUP_ROOT" || (-d "$BACKUP_ROOT" && ! -L "$BACKUP_ROOT") ]] ||
     fail "invalid release backup root"
 install -d -o root -g root -m 0700 "$BACKUP_ROOT"
+install -d -o root -g root -m 0700 "$STATE_DIR"
+if [[ -e "$STATE_FILE" ]]; then chmod 0600 "$STATE_FILE"; fi
 mkdir -m 0700 "$BACKUP_DIR"
 install -o root -g root -m 0644 "$UNIT_PATH" "$BACKUP_DIR/tlggptbot.service"
 systemctl status "$SERVICE_NAME" --no-pager >"$BACKUP_DIR/service-before.txt" || true

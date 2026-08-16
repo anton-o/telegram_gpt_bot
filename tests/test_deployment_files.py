@@ -83,6 +83,7 @@ def test_systemd_unit_uses_uv_environment_without_runtime_sync():
 
     assert "WorkingDirectory=/root/python" in unit
     assert "ExecStart=/root/python/.venv/bin/python /root/python/main.py" in unit
+    assert "Environment=TLGGPTBOT_STATE_PATH=/var/lib/tlggptbot/user-state.json" in unit
     assert "ExecStartPre=" not in unit
     assert "uv sync" not in unit
 
@@ -97,6 +98,22 @@ def test_routine_deploy_is_staged_and_main_only():
     assert 'NEW_APP="${APP_DIR}.new.${DEPLOYMENT_ID}"' in remote_deploy
     assert "rolling back" in remote_deploy
     assert "health_start=\"$(date '+%Y-%m-%d %H:%M:%S')\"" in remote_deploy
+
+
+def test_deployment_preserves_state_outside_atomic_release_directory():
+    local_deploy = (PROJECT_ROOT / "deploy.sh").read_text()
+    remote_deploy = (PROJECT_ROOT / "deploy-remote.sh").read_text()
+
+    assert "state_store.py" in local_deploy
+    assert 'readonly STATE_DIR="/var/lib/tlggptbot"' in remote_deploy
+    assert 'readonly STATE_FILE="$STATE_DIR/user-state.json"' in remote_deploy
+    assert 'install -d -o root -g root -m 0700 "$STATE_DIR"' in remote_deploy
+    assert 'chmod 0600 "$STATE_FILE"' in remote_deploy
+    assert "state_store.py utils_handlers.py" in remote_deploy
+    assert (
+        "/var/lib/tlggptbot"
+        not in remote_deploy.split("while IFS= read -r old_backup;", 1)[1]
+    )
 
 
 def test_runtime_version_pins_stay_aligned():

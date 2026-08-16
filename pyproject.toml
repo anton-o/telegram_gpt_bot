@@ -5,7 +5,7 @@ description = "Telegram bot backed by OpenAI and Google Gemini"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "google-genai==1.20.0",
+    "google-genai==2.3.0",
     "openai==1.86",
     "python-telegram-bot==22.1",
 ]
@@ -40,6 +40,7 @@ known-first-party = [
     "bot_secrets",
     "help",
     "main",
+    "state_store",
     "utils_handlers",
     "white_lists",
 ]
