@@ -10,3 +10,4 @@ coverage.xml
 htmlcov/
 /.state/
 /user-state.json
+/docs/superpowers/
