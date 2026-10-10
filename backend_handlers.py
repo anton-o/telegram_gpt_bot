@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -8,10 +9,11 @@ from urllib.parse import SplitResult, urlsplit
 
 from google import genai
 from openai import AsyncOpenAI, BadRequestError
-from telegram import Update
+from telegram import PhotoSize, Update
+from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
-from bot_secrets import GEMINI_API_KEY, OPENAI_KEY, ORGANIZATION, PROJECT
+from bot_secrets import BOT_NAME, GEMINI_API_KEY, OPENAI_KEY, ORGANIZATION, PROJECT
 from state_store import state_store
 
 # Initialize clients
@@ -28,6 +30,12 @@ OPENAI_SEARCH_FALLBACK_NOTICE = (
     "⚠️ Live web search is unavailable for this model; "
     "this answer was generated without it."
 )
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+IMAGE_SIZE_NOTICE = "⚠️ Please send a photo no larger than 10 MiB."
+IMAGE_REQUEST_NOTICE = (
+    "⚠️ This image request could not be processed. Check the photo or "
+    "choose an image-capable model with /smodel."
+)
 
 logger = logging.getLogger(__name__)
 _user_locks: dict[int, asyncio.Lock] = {}
@@ -38,6 +46,16 @@ class LLMResult:
     text: str
     context_id: str | None
     succeeded: bool = True
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    data: bytes
+    mime_type: str
+
+
+class PhotoInputError(ValueError):
+    """A safe, user-facing photo validation or download error."""
 
 
 class ContextUnavailableError(RuntimeError):
@@ -122,6 +140,90 @@ async def bot_mentioned(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(chunk, parse_mode="Markdown")
 
 
+async def _download_photo(photo: PhotoSize) -> ImageInput:
+    if photo.file_size is not None and photo.file_size > MAX_IMAGE_BYTES:
+        raise PhotoInputError(IMAGE_SIZE_NOTICE)
+    try:
+        remote_file = await photo.get_file()
+        if (
+            remote_file.file_size is not None
+            and remote_file.file_size > MAX_IMAGE_BYTES
+        ):
+            raise PhotoInputError(IMAGE_SIZE_NOTICE)
+        data = bytes(await remote_file.download_as_bytearray())
+    except PhotoInputError:
+        raise
+    except Exception as exc:
+        logger.warning("Photo download failed with %s", type(exc).__name__)
+        raise PhotoInputError(
+            "⚠️ Could not download the photo. Please send it again with a caption."
+        ) from None
+
+    if len(data) > MAX_IMAGE_BYTES:
+        raise PhotoInputError(IMAGE_SIZE_NOTICE)
+    # Telegram validates uploaded photos. Identify their format without decoding
+    # or persisting them; the provider performs the final image validation.
+    if data.startswith(b"\xff\xd8\xff"):
+        mime_type = "image/jpeg"
+    elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime_type = "image/png"
+    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        mime_type = "image/webp"
+    else:
+        raise PhotoInputError(
+            "⚠️ Could not read this photo. Send a JPEG, PNG, or WebP photo."
+        )
+    return ImageInput(data, mime_type)
+
+
+async def image_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle one photo with a caption after the application access filters."""
+    message = update.message
+    identifiers = _ids_from_update(update)
+    if message is None or identifiers is None or not message.photo:
+        return
+    chat_id, user_id = identifiers
+    is_private = update.effective_chat.type == ChatType.PRIVATE
+    caption = (message.caption or "").strip()
+    if not is_private:
+        parts = caption.split(maxsplit=1)
+        if not parts or parts[0].casefold() != f"@{BOT_NAME}".casefold():
+            return
+        caption = parts[1].strip() if len(parts) == 2 else ""
+    if message.media_group_id is not None:
+        await message.reply_text(
+            "⚠️ Send one photo at a time with a text caption, not an album."
+        )
+        return
+    if not caption:
+        await message.reply_text(
+            "⚠️ Send the photo again with your question in its caption."
+        )
+        return
+
+    try:
+        if is_private:
+            result, announce_new = await _ask_private_llm(
+                caption, chat_id=chat_id, user_id=user_id, photo=message.photo[-1]
+            )
+        else:
+            image = await _download_photo(message.photo[-1])
+            settings = await _get_user_settings(user_id)
+            _, model = _active_provider_and_model(settings)
+            result = await _async_ask_llm(
+                caption, settings["use_gemini"], model, store_context=False, image=image
+            )
+            announce_new = False
+    except PhotoInputError as exc:
+        await message.reply_text(str(exc))
+        return
+
+    if announce_new:
+        await message.reply_text(NEW_CONVERSATION_NOTICE)
+    for chunk in wrap(result.text, width=4096, replace_whitespace=False):
+        await message.reply_text(chunk, parse_mode="Markdown")
+
+
 def _conversation_is_expired(conversation: dict[str, Any], now: datetime) -> bool:
     timestamp = conversation.get("last_successful_turn_at")
     if not timestamp:
@@ -140,8 +242,12 @@ async def _ask_private_llm(
     *,
     chat_id: int,
     user_id: int,
+    photo: PhotoSize | None = None,
 ) -> tuple[LLMResult, bool]:
     async with _get_user_lock(user_id):
+        # Keep downloads in turn order, and reject invalid photos before any
+        # conversation reset. Reuse these bytes if provider context has expired.
+        image_kwargs = {"image": await _download_photo(photo)} if photo else {}
         settings = await _get_user_settings(user_id)
         provider, model = _active_provider_and_model(settings)
         conversation = await state_store.get_conversation(chat_id, user_id)
@@ -184,6 +290,7 @@ async def _ask_private_llm(
                 previous_context_id=previous_context_id,
                 store_context=True,
                 allow_web_search=not settings["use_gemini"],
+                **image_kwargs,
             )
         except ContextUnavailableError:
             await state_store.reset_conversation(
@@ -199,6 +306,7 @@ async def _ask_private_llm(
                 model,
                 store_context=True,
                 allow_web_search=not settings["use_gemini"],
+                **image_kwargs,
             )
             announce_new = True
 
@@ -499,8 +607,10 @@ async def _async_ask_llm(
     previous_context_id: str | None = None,
     store_context: bool,
     allow_web_search: bool = False,
+    image: ImageInput | None = None,
 ) -> LLMResult:
     try:
+        encoded_image = base64.b64encode(image.data).decode("ascii") if image else None
         if use_gemini:
             request: dict[str, Any] = {
                 "model": model,
@@ -509,6 +619,16 @@ async def _async_ask_llm(
                 "tools": [{"type": "google_search"}],
                 "store": store_context,
             }
+            if image is not None:
+                request["input"] = [
+                    {"type": "text", "text": user_request},
+                    {
+                        "type": "image",
+                        "data": encoded_image,
+                        "mime_type": image.mime_type,
+                    },
+                ]
+                request["response_modalities"] = ["text"]
             if previous_context_id is not None:
                 request["previous_interaction_id"] = previous_context_id
 
@@ -530,6 +650,21 @@ async def _async_ask_llm(
             "input": user_request,
             "store": store_context,
         }
+        if image is not None:
+            image_url = f"data:{image.mime_type};base64,{encoded_image}"
+            request["input"] = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": user_request},
+                        {
+                            "type": "input_image",
+                            "image_url": image_url,
+                            "detail": "auto",
+                        },
+                    ],
+                }
+            ]
         if previous_context_id is not None:
             request["previous_response_id"] = previous_context_id
         if allow_web_search:
@@ -569,7 +704,12 @@ async def _async_ask_llm(
             type(exc).__name__,
         )
         return LLMResult(
-            text="⚠️ API request failed. Please try again.",
+            text=(
+                IMAGE_REQUEST_NOTICE
+                if image is not None
+                and getattr(exc, "status_code", None) in {400, 415, 422}
+                else "⚠️ API request failed. Please try again."
+            ),
             context_id=None,
             succeeded=False,
         )
