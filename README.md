@@ -8,9 +8,24 @@ https://docs.python-telegram-bot.org/en/latest/examples.echobot.html
   2. can be used in Telegram groups by mentioning the bot
   3. supports persistent private conversations for configured administrators
   4. allows administrators to select the active backend and model
+  5. answers questions about a single Telegram photo with OpenAI or Gemini
 
 OpenAI is the default backend and `gpt-5.6-terra` is its default model. Saved
 per-user selections continue to override these defaults.
+
+## Photo questions
+
+Send a single Telegram photo with a required text caption describing your
+question. Private photo requests are available to configured administrators.
+In an allowed group, start the caption with `@yourbotname`, followed by
+whitespace and your question, for example: `@yourbotname What is in this photo?`
+The bot returns a text answer using your selected OpenAI or Gemini model.
+
+Photos must be at most 10 MiB. Albums, images sent as documents, and image
+generation are not supported. Photo bytes are downloaded and processed in
+memory and are not saved locally. Private photo requests reuse the same
+provider-side conversation context as text requests; group photo requests are
+stateless.
 
 ## Private conversation context
 

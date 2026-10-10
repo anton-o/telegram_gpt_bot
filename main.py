@@ -5,6 +5,7 @@ from telegram import __version__ as TG_VER
 from backend_handlers import (
     bot_mentioned,
     gpt,
+    image_request,
     reset_conversation,
     set_backend,
     set_current_model,
@@ -66,6 +67,11 @@ def main() -> None:
         filters.TEXT & ~filters.COMMAND & admins_filter & filters.ChatType.PRIVATE
     )
     application.add_handler(MessageHandler(message_filters, gpt))
+    photo_filters = filters.PHOTO & (
+        (admins_filter & filters.ChatType.PRIVATE)
+        | (groups_filter & filters.ChatType.GROUPS)
+    )
+    application.add_handler(MessageHandler(photo_filters, image_request))
     application.add_handler(CommandHandler("whoami", whoami, filters=admins_filter))
     application.add_handler(
         CommandHandler("smodel", set_current_model, filters=admins_filter)
